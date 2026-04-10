@@ -5,9 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_db_session
-from app.schemas import ChatQueryRequest, ChatQueryResponse, SourceItem
+from app.schemas import ChatQueryRequest, ChatQueryResponse, QuoteSpan, SourceItem
 from app.services.answering import AnsweringService
-from app.services.node_fetcher import NodeFetcher
 from app.services.retrieval import RetrievalService
 
 
@@ -20,7 +19,6 @@ async def query_chat(payload: ChatQueryRequest, session: DbSessionDep) -> ChatQu
     settings = get_settings()
     answering_service = AnsweringService()
     retrieval_service = RetrievalService()
-    node_fetcher = NodeFetcher()
 
     plan = await answering_service.plan_queries(payload.question)
     evidence = []
@@ -47,32 +45,36 @@ async def query_chat(payload: ChatQueryRequest, session: DbSessionDep) -> ChatQu
             intent_hint=plan.intent,
         )
 
-    quotes = []
-    seen_node_ids: set[int] = set()
+    quotes: list[QuoteSpan] = []
+    seen_chunk_ids: set[int] = set()
     for item in evidence[:3]:
-        node_id = int(item.metadata.get("quote_node_id", item.metadata.get("start_node_id", 0)))
-        if not node_id or node_id in seen_node_ids:
+        if item.chunk_id in seen_chunk_ids:
             continue
-        seen_node_ids.add(node_id)
-        expand = "paragraph" if plan.intent == "quote_request" else "sentence"
+        seen_chunk_ids.add(item.chunk_id)
         quotes.append(
-            await node_fetcher.get_span(
-                session=session,
-                node_id=node_id,
-                char_start=int(item.metadata.get("char_start", item.metadata.get("chunk_char_start", 0))),
-                char_end=int(item.metadata.get("char_end", item.metadata.get("chunk_char_end", 0))),
-                expand=expand,
+            QuoteSpan(
+                chunk_id=item.chunk_id,
+                path=item.path,
+                path_text=item.path_text,
+                section=item.section,
+                part=item.part,
+                subpart=item.subpart,
+                markers=item.markers,
+                text=item.text,
             )
         )
 
     sources_map: dict[str, SourceItem] = {}
     for item in evidence[:5]:
         sources_map.setdefault(
-            item.source_label,
+            item.path_text,
             SourceItem(
-                source_label=item.source_label,
-                page_start=item.page_start,
-                page_end=item.page_end,
+                chunk_id=item.chunk_id,
+                path_text=item.path_text,
+                section=item.section,
+                part=item.part,
+                subpart=item.subpart,
+                markers=item.markers,
             ),
         )
 

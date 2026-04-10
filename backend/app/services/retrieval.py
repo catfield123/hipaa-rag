@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.models import RetrievalChunk
 from app.schemas import QueryPlan, RetrievalEvidence, StructuralFilters
 from app.services.bm25 import BM25Service
+from app.services.chunk_contract import build_retrieval_evidence, matches_structural_filters
 from app.services.embeddings import EmbeddingService
 from app.services.text_utils import unique_preserve_order
 
@@ -88,19 +89,13 @@ class RetrievalService:
 
         evidence: list[RetrievalEvidence] = []
         for chunk, distance_value in rows:
-            if filters and not self._matches_filters(chunk.metadata_json, filters):
+            if filters and not matches_structural_filters(chunk, filters):
                 continue
             evidence.append(
-                RetrievalEvidence(
-                    chunk_id=chunk.id,
-                    source_label=chunk.source_label,
-                    page_start=chunk.page_start,
-                    page_end=chunk.page_end,
-                    content=chunk.content,
-                    content_with_context=chunk.content_with_context,
+                build_retrieval_evidence(
+                    chunk,
                     retrieval_mode="dense",
                     score=max(0.0, 1.0 - float(distance_value)),
-                    metadata=chunk.metadata_json,
                 )
             )
             if len(evidence) >= limit:
@@ -147,44 +142,3 @@ class RetrievalService:
             evidence_by_id[int(chunk_id)]
             for chunk_id in merged_order[:limit]
         ]
-
-    def _matches_filters(self, metadata: dict[str, object], filters: StructuralFilters) -> bool:
-        if filters.part_number:
-            included_parts = {str(value) for value in metadata.get("included_part_numbers", []) if value is not None}
-            fallback_part = metadata.get("part_number")
-            if fallback_part is not None:
-                included_parts.add(str(fallback_part))
-            if filters.part_number not in included_parts:
-                return False
-
-        if filters.section_number:
-            included_sections = {
-                str(value) for value in metadata.get("included_section_numbers", []) if value is not None
-            }
-            fallback_section = metadata.get("section_number")
-            if fallback_section is not None:
-                included_sections.add(str(fallback_section))
-            if filters.section_number not in included_sections:
-                return False
-
-        if filters.subpart:
-            expected_subpart = filters.subpart.upper()
-            included_subparts = {
-                str(value).upper() for value in metadata.get("included_subparts", []) if value is not None
-            }
-            fallback_subpart = metadata.get("subpart")
-            if fallback_subpart is not None:
-                included_subparts.add(str(fallback_subpart).upper())
-            if expected_subpart not in included_subparts:
-                return False
-
-        if filters.marker_path:
-            expected_marker = f"({filters.marker_path[-1]})"
-            included_markers = {str(value) for value in metadata.get("included_markers", []) if value is not None}
-            fallback_marker = metadata.get("marker")
-            if fallback_marker is not None:
-                included_markers.add(str(fallback_marker))
-            if expected_marker not in included_markers:
-                return False
-
-        return True

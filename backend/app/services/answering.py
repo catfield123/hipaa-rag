@@ -109,9 +109,12 @@ class AnsweringService:
 
         evidence_payload = [
             {
-                "source_label": item.source_label,
-                "pages": [item.page_start, item.page_end],
-                "content": item.content,
+                "path_text": item.path_text,
+                "part": item.part,
+                "subpart": item.subpart,
+                "section": item.section,
+                "markers": item.markers,
+                "text": item.text,
             }
             for item in evidence[:6]
         ]
@@ -131,7 +134,8 @@ class AnsweringService:
                 "content": (
                     "You answer questions about HIPAA using only provided evidence. "
                     "Do not hallucinate. If the question is an existence check, "
-                    "answer only from the retrieved BM25 or hybrid evidence."
+                    "answer only from the retrieved BM25 or hybrid evidence. "
+                    "Use the structural references in each chunk when citing support."
                 ),
             },
             {
@@ -239,7 +243,7 @@ class AnsweringService:
     ) -> str:
         if intent == "existence_check":
             if evidence:
-                sources = ", ".join(item.source_label for item in evidence[:3])
+                sources = ", ".join(item.path_text for item in evidence[:3])
                 return (
                     "I found HIPAA passages relevant to that mention or existence question. "
                     f"Strongest sources: {sources}."
@@ -248,6 +252,6 @@ class AnsweringService:
 
         lead = evidence[0]
         return (
-            f"Based on the retrieved HIPAA text, the strongest supporting source is {lead.source_label}. "
-            f"Relevant excerpt: {lead.content}"
+            f"Based on the retrieved HIPAA text, the strongest supporting source is {lead.path_text}. "
+            f"Relevant excerpt: {lead.text}"
         )

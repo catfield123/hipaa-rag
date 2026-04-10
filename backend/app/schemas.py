@@ -39,24 +39,27 @@ class QueryPlan(BaseModel):
 
 class RetrievalEvidence(BaseModel):
     chunk_id: int
-    source_label: str
-    page_start: int
-    page_end: int
-    content: str
-    content_with_context: str
+    path: list[str] = Field(default_factory=list)
+    path_text: str
+    text: str
+    section: str | None = None
+    part: str | None = None
+    subpart: str | None = None
+    markers: list[str] = Field(default_factory=list)
     retrieval_mode: Literal["bm25_only", "dense", "hybrid"]
     score: float
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class QuoteSpan(BaseModel):
-    node_id: int
-    source_label: str
-    page_start: int
-    page_end: int
+    chunk_id: int
+    path: list[str] = Field(default_factory=list)
+    path_text: str
+    section: str | None = None
+    part: str | None = None
+    subpart: str | None = None
+    markers: list[str] = Field(default_factory=list)
     text: str
-    char_start: int
-    char_end: int
 
 
 class EvidenceDecision(BaseModel):
@@ -66,9 +69,12 @@ class EvidenceDecision(BaseModel):
 
 
 class SourceItem(BaseModel):
-    source_label: str
-    page_start: int
-    page_end: int
+    chunk_id: int
+    path_text: str
+    section: str | None = None
+    part: str | None = None
+    subpart: str | None = None
+    markers: list[str] = Field(default_factory=list)
 
 
 class ChatQueryRequest(BaseModel):
@@ -103,27 +109,10 @@ class HealthResponse(BaseModel):
     status: str
 
 
-class FetchSpanRequest(BaseModel):
-    node_id: int
-    char_start: int = 0
-    char_end: int | None = None
-    expand: Literal["none", "sentence", "paragraph"] = "none"
-
-
-class NodeResponse(BaseModel):
-    id: int
-    parent_id: int | None
-    source_label: str
-    heading: str | None
-    raw_text: str
-    page_start: int
-    page_end: int
-
-
 class IngestionSummary(BaseModel):
-    document_nodes: int
     retrieval_chunks: int
     bm25_terms: int
+    source_mode: Literal["markdown", "pdf"]
 
 
 class IngestionResult(BaseModel):

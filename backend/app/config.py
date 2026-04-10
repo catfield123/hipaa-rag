@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@db:5432/hipaa_rag"
     )
-    hipaa_pdf_path: str = "/data/hipaa-combined.pdf"
+    filtered_markdown_path: str = "/data/filtered_markdown.md"
 
     @property
     def alembic_database_url(self) -> str:

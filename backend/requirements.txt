@@ -6,6 +6,5 @@ openai
 pgvector
 psycopg[binary]
 pydantic-settings
-pypdf
 sqlalchemy
 uvicorn[standard]

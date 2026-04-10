@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import BM25CorpusStat, BM25Posting, BM25Term, RetrievalChunk
 from app.schemas import RetrievalEvidence, StructuralFilters
+from app.services.chunk_contract import build_retrieval_evidence, matches_structural_filters
 from app.services.text_utils import estimate_token_count, tokenize
 
 
@@ -112,7 +113,7 @@ class BM25Service:
         scores: dict[int, float] = defaultdict(float)
         chunk_map: dict[int, RetrievalChunk] = {}
         for posting, chunk in postings:
-            if filters and not self._matches_filters(chunk.metadata_json, filters):
+            if filters and not matches_structural_filters(chunk, filters):
                 continue
             chunk_map[chunk.id] = chunk
             doc_len = max(int(chunk.metadata_json.get("bm25_length", chunk.token_count)), 1)
@@ -126,60 +127,13 @@ class BM25Service:
 
         ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:limit]
         return [
-            RetrievalEvidence(
-                chunk_id=chunk_id,
-                source_label=chunk_map[chunk_id].source_label,
-                page_start=chunk_map[chunk_id].page_start,
-                page_end=chunk_map[chunk_id].page_end,
-                content=chunk_map[chunk_id].content,
-                content_with_context=chunk_map[chunk_id].content_with_context,
+            build_retrieval_evidence(
+                chunk_map[chunk_id],
                 retrieval_mode="bm25_only",
                 score=score,
-                metadata=chunk_map[chunk_id].metadata_json,
             )
             for chunk_id, score in ranked
         ]
-
-    def _matches_filters(self, metadata: dict[str, object], filters: StructuralFilters) -> bool:
-        if filters.part_number:
-            included_parts = {str(value) for value in metadata.get("included_part_numbers", []) if value is not None}
-            fallback_part = metadata.get("part_number")
-            if fallback_part is not None:
-                included_parts.add(str(fallback_part))
-            if filters.part_number not in included_parts:
-                return False
-
-        if filters.section_number:
-            included_sections = {
-                str(value) for value in metadata.get("included_section_numbers", []) if value is not None
-            }
-            fallback_section = metadata.get("section_number")
-            if fallback_section is not None:
-                included_sections.add(str(fallback_section))
-            if filters.section_number not in included_sections:
-                return False
-
-        if filters.subpart:
-            expected_subpart = filters.subpart.upper()
-            included_subparts = {
-                str(value).upper() for value in metadata.get("included_subparts", []) if value is not None
-            }
-            fallback_subpart = metadata.get("subpart")
-            if fallback_subpart is not None:
-                included_subparts.add(str(fallback_subpart).upper())
-            if expected_subpart not in included_subparts:
-                return False
-
-        if filters.marker_path:
-            expected_marker = f"({filters.marker_path[-1]})"
-            included_markers = {str(value) for value in metadata.get("included_markers", []) if value is not None}
-            fallback_marker = metadata.get("marker")
-            if fallback_marker is not None:
-                included_markers.add(str(fallback_marker))
-            if expected_marker not in included_markers:
-                return False
-
-        return True
 
 
 def chunk_payloads_for_bm25(chunks: list[object]) -> list[dict[str, object]]:

@@ -1,213 +1,232 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from dataclasses import dataclass
-
-from app.services.pdf_parser import ParsedDocument, ParsedNode
-from app.services.text_utils import estimate_token_count, normalize_text
-
-
-@dataclass
-class ChunkRecord:
-    start_node_key: str
-    end_node_key: str
-    quote_node_key: str
-    chunk_index: int
-    source_label: str
-    content: str
-    content_with_context: str
-    token_count: int
-    char_start: int
-    char_end: int
-    page_start: int
-    page_end: int
-    metadata: dict[str, object]
+import json
+import re
+from pathlib import Path
+from typing import Any
 
 
-@dataclass
-class ChunkAtom:
-    node_key: str
-    parent_key: str | None
-    section_key: str
-    part_number: str | None
-    subpart: str | None
-    section_number: str | None
-    section_source_label: str
-    source_label: str
-    token: str
-    page_start: int
-    page_end: int
-    marker: str | None
+class MarkdownChunker:
+    PART_RE = re.compile(r"^PART\s+(\d+)\b(.*)")
+    SUBPART_RE = re.compile(r"^Subpart\s+([A-Z])(?:[-\s]+)(.*)")
+    SECTION_RE = re.compile(r"^§\s*(\d+\.\d+)\b\s+([A-Z].*)")
+    COMPOUND_MARKERS_RE = re.compile(r"^((?:\([A-Za-z0-9ivxlcdmIVXLCDM]+\))+)\s*(.*)$")
+    SINGLE_MARKER_RE = re.compile(r"\(([A-Za-z0-9ivxlcdmIVXLCDM]+)\)")
+    FR_RE = re.compile(r"^\[\d{2,}\s+FR.*\]$")
 
+    def chunk_markdown(self, src: str | list[str]) -> list[dict[str, Any]]:
+        lines = self._normalize_lines(src)
+        chunks: list[dict[str, Any]] = []
 
-class RetrievalChunker:
-    def __init__(
-        self,
-        window_tokens: int = 64,
-        overlap_tokens: int = 20,
-    ) -> None:
-        self.window_tokens = window_tokens
-        self.overlap_tokens = overlap_tokens
+        current_part_label: str | None = None
+        current_subpart_label: str | None = None
+        current_section_label: str | None = None
+        marker_stack: list[dict[str, Any]] = []
+        current_chunk: dict[str, Any] | None = None
 
-    def build_chunks(self, document: ParsedDocument) -> list[ChunkRecord]:
-        nodes_by_key = {node.key: node for node in document.nodes}
-        children_by_parent = self._build_children_map(document.nodes)
-        section_nodes = [node for node in document.nodes if node.node_type == "section"]
-        all_atoms: list[ChunkAtom] = []
-        chunks: list[ChunkRecord] = []
-        chunk_counter = 0
+        def push_chunk(text: str, markers: list[dict[str, Any]]) -> dict[str, Any]:
+            nonlocal current_chunk
+            if current_section_label is None:
+                raise ValueError("Found content before first section header")
 
-        for section in section_nodes:
-            all_atoms.extend(self._build_atoms(section, children_by_parent, nodes_by_key))
+            chunk = self._make_chunk(
+                text=text,
+                part_label=current_part_label,
+                subpart_label=current_subpart_label,
+                section_label=current_section_label,
+                markers=markers,
+            )
+            chunks.append(chunk)
+            current_chunk = chunk
+            return chunk
 
-        for window_atoms in self._build_windows(all_atoms):
-            chunks.append(self._build_chunk_record(window_atoms, nodes_by_key, chunk_counter))
-            chunk_counter += 1
+        for raw in lines:
+            line = raw.strip()
+            if not line or line == "Contents" or self.FR_RE.fullmatch(line) or "[Reserved]" in line:
+                continue
+
+            part_match = self.PART_RE.match(line)
+            if part_match:
+                part_no, part_title = part_match.groups()
+                current_part_label = f"PART {part_no} {part_title.strip()}".strip()
+                current_subpart_label = None
+                current_section_label = None
+                marker_stack = []
+                current_chunk = None
+                continue
+
+            subpart_match = self.SUBPART_RE.match(line)
+            if subpart_match:
+                subpart_letter, subpart_title = subpart_match.groups()
+                current_subpart_label = (
+                    f"Subpart {subpart_letter} - {subpart_title.strip()}".strip(" -")
+                )
+                current_section_label = None
+                marker_stack = []
+                current_chunk = None
+                continue
+
+            if line.startswith("§ ") and not self.SECTION_RE.match(line):
+                if current_chunk is not None:
+                    current_chunk["text"] += " " + line
+                continue
+
+            section_match = self.SECTION_RE.match(line)
+            if section_match:
+                sec_no, sec_title = section_match.groups()
+                current_section_label = f"§ {sec_no} {sec_title.strip()}".strip()
+                marker_stack = []
+                current_chunk = None
+                continue
+
+            marker_match = self.COMPOUND_MARKERS_RE.match(line)
+            if marker_match:
+                compound, rest = marker_match.groups()
+                tokens = self.SINGLE_MARKER_RE.findall(compound)
+
+                if len(tokens) > 1:
+                    marker_stack = [
+                        {
+                            "marker": f"({token})",
+                            "value": token,
+                            "kind": self._marker_kind(token),
+                            "rank": self._marker_rank(self._marker_kind(token)),
+                        }
+                        for token in tokens
+                    ]
+                else:
+                    token = tokens[0]
+                    kind = self._marker_kind(token)
+                    rank = self._marker_rank(kind)
+
+                    while marker_stack and marker_stack[-1]["rank"] >= rank:
+                        marker_stack.pop()
+
+                    marker_stack.append(
+                        {
+                            "marker": f"({token})",
+                            "value": token,
+                            "kind": kind,
+                            "rank": rank,
+                        }
+                    )
+
+                push_chunk(rest, marker_stack.copy())
+                continue
+
+            if current_section_label is None:
+                continue
+
+            if current_chunk is not None and self._is_continuation_line(line, current_chunk["text"]):
+                current_chunk["text"] += " " + line
+                continue
+
+            marker_stack = []
+            push_chunk(line, [])
+
+        for idx, chunk in enumerate(chunks, start=1):
+            chunk["id"] = idx
 
         return chunks
 
-    def _build_atoms(
+    def chunk_markdown_file(
         self,
-        section: ParsedNode,
-        children_by_parent: dict[str, list[str]],
-        nodes_by_key: dict[str, ParsedNode],
-    ) -> list[ChunkAtom]:
-        atoms: list[ChunkAtom] = []
-        for leaf in self._collect_leaf_descendants(section.key, children_by_parent, nodes_by_key):
-            text = normalize_text(leaf.raw_text)
-            if not text:
-                continue
-            for token in text.split():
-                atoms.append(
-                    ChunkAtom(
-                        node_key=leaf.key,
-                        parent_key=leaf.parent_key,
-                        section_key=section.key,
-                        part_number=leaf.part_number,
-                        subpart=leaf.subpart,
-                        section_number=leaf.section_number,
-                        section_source_label=section.source_label,
-                        source_label=leaf.source_label,
-                        token=token,
-                        page_start=leaf.page_start,
-                        page_end=leaf.page_end,
-                        marker=leaf.marker,
-                    )
-                )
-        return atoms
+        markdown_path: str | Path,
+        *,
+        output_path: str | Path | None = None,
+    ) -> list[dict[str, Any]]:
+        markdown_path = Path(markdown_path)
+        markdown = markdown_path.read_text(encoding="utf-8")
+        chunks = self.chunk_markdown(markdown)
 
-    def _build_windows(self, atoms: list[ChunkAtom]) -> list[list[ChunkAtom]]:
-        if not atoms:
-            return []
+        if output_path is not None:
+            self.save_chunks(chunks, output_path)
 
-        windows: list[list[ChunkAtom]] = []
-        step = max(1, self.window_tokens - self.overlap_tokens)
+        return chunks
 
-        for start_index in range(0, len(atoms), step):
-            window_atoms = atoms[start_index : start_index + self.window_tokens]
-            if not window_atoms:
-                continue
-            windows.append(window_atoms)
-            if start_index + self.window_tokens >= len(atoms):
-                break
-
-        return windows
-
-    def _build_children_map(self, nodes: list[ParsedNode]) -> dict[str, list[str]]:
-        children_by_parent: dict[str, list[str]] = defaultdict(list)
-        for node in nodes:
-            if node.parent_key:
-                children_by_parent[node.parent_key].append(node.key)
-        return children_by_parent
-
-    def _collect_leaf_descendants(
-        self,
-        node_key: str,
-        children_by_parent: dict[str, list[str]],
-        nodes_by_key: dict[str, ParsedNode],
-    ) -> list[ParsedNode]:
-        children = children_by_parent.get(node_key, [])
-        if not children:
-            return [nodes_by_key[node_key]]
-
-        leaves: list[ParsedNode] = []
-        for child_key in children:
-            leaves.extend(self._collect_leaf_descendants(child_key, children_by_parent, nodes_by_key))
-        return leaves
-
-    def _build_chunk_record(
-        self,
-        atoms: list[ChunkAtom],
-        nodes_by_key: dict[str, ParsedNode],
-        chunk_index: int,
-    ) -> ChunkRecord:
-        content = " ".join(atom.token for atom in atoms).strip()
-        start_node_key = atoms[0].node_key
-        end_node_key = atoms[-1].node_key
-        start_section = nodes_by_key[atoms[0].section_key]
-        end_section = nodes_by_key[atoms[-1].section_key]
-        quote_node_key = Counter(atom.node_key for atom in atoms).most_common(1)[0][0]
-        content_with_context = content
-        # Keep the persisted chunk label short and stable for DB storage,
-        # while the full structural context stays in metadata/content_with_context.
-        source_label = f"pp. {min(atom.page_start for atom in atoms)}-{max(atom.page_end for atom in atoms)}"
-        if start_section.key != end_section.key:
-            source_label = (
-                f"pp. {min(atom.page_start for atom in atoms)}-{max(atom.page_end for atom in atoms)} "
-                f"({start_section.source_label} -> {end_section.source_label})"
-            )[:255]
-        markers = list(dict.fromkeys(atom.marker for atom in atoms if atom.marker))
-        section_keys = list(dict.fromkeys(atom.section_key for atom in atoms))
-        section_labels = [
-            nodes_by_key[section_key].source_label
-            for section_key in section_keys
-            if section_key in nodes_by_key
-        ]
-        section_numbers = list(dict.fromkeys(atom.section_number for atom in atoms if atom.section_number))
-        part_numbers = list(dict.fromkeys(atom.part_number for atom in atoms if atom.part_number))
-        subparts = list(dict.fromkeys(atom.subpart for atom in atoms if atom.subpart))
-        node_keys = [atom.node_key for atom in atoms]
-        node_labels = [atom.source_label for atom in atoms]
-
-        return ChunkRecord(
-            start_node_key=start_node_key,
-            end_node_key=end_node_key,
-            quote_node_key=quote_node_key,
-            chunk_index=chunk_index,
-            source_label=source_label,
-            content=content,
-            content_with_context=content_with_context,
-            token_count=len(atoms),
-            char_start=0,
-            char_end=len(normalize_text(nodes_by_key[quote_node_key].raw_text)),
-            page_start=min(atom.page_start for atom in atoms),
-            page_end=max(atom.page_end for atom in atoms),
-            metadata={
-                "part_number": start_section.part_number,
-                "subpart": start_section.subpart,
-                "section_number": start_section.section_number,
-                "section_node_key": start_section.key,
-                "section_source_label": start_section.source_label,
-                "section_heading": start_section.heading,
-                "start_section_node_key": start_section.key,
-                "end_section_node_key": end_section.key,
-                "included_section_keys": section_keys,
-                "included_section_labels": section_labels,
-                "included_section_numbers": section_numbers,
-                "included_section_count": len(section_keys),
-                "included_part_numbers": part_numbers,
-                "included_subparts": subparts,
-                "marker": atoms[0].marker if len(markers) == 1 else None,
-                "included_markers": markers,
-                "included_node_keys": node_keys,
-                "included_source_labels": node_labels,
-                "included_node_count": len(node_keys),
-                "start_source_label": atoms[0].source_label,
-                "end_source_label": atoms[-1].source_label,
-                "quote_node_key": quote_node_key,
-                "crosses_node_boundary": len(node_keys) > 1,
-                "crosses_section_boundary": len(section_keys) > 1,
-                "window_token_target": self.window_tokens,
-                "window_token_overlap": self.overlap_tokens,
-            },
+    @staticmethod
+    def save_chunks(chunks: list[dict[str, Any]], output_path: str | Path) -> Path:
+        output_path = Path(output_path)
+        output_path.write_text(
+            json.dumps(chunks, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
+        return output_path
+
+    @staticmethod
+    def _normalize_lines(src: str | list[str]) -> list[str]:
+        if isinstance(src, str):
+            return [line.rstrip() for line in src.splitlines()]
+        return [str(line).rstrip("\n\r") for line in src]
+
+    @staticmethod
+    def _marker_kind(token: str) -> str:
+        if token.isdigit():
+            return "number"
+        if len(token) == 1 and token.isupper():
+            return "upper"
+        if token.islower() and re.fullmatch(r"[ivxlcdm]+", token):
+            return "roman"
+        if len(token) == 1 and token.islower():
+            return "lower"
+        return "other"
+
+    @staticmethod
+    def _marker_rank(kind: str) -> int:
+        return {
+            "lower": 0,
+            "number": 1,
+            "roman": 2,
+            "upper": 3,
+            "other": 4,
+        }[kind]
+
+    @staticmethod
+    def _is_terminal_chunk(text: str) -> bool:
+        return bool(text) and text.rstrip().endswith((".", ";", ":", "?", "!", "]"))
+
+    def _is_continuation_line(self, line: str, previous_text: str) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+
+        if stripped.startswith("§ ") and not self.SECTION_RE.match(stripped):
+            return True
+
+        first = stripped[0]
+        if first.islower():
+            return True
+        if first in {",", ";", ":", ")", "]"}:
+            return True
+        if not self._is_terminal_chunk(previous_text):
+            return True
+
+        return False
+
+    @staticmethod
+    def _make_chunk(
+        *,
+        text: str,
+        part_label: str | None,
+        subpart_label: str | None,
+        section_label: str,
+        markers: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        path = [label for label in [part_label, subpart_label, section_label] if label]
+        path.extend(marker["marker"] for marker in markers)
+
+        return {
+            "path": path,
+            "path_text": " > ".join(path),
+            "text": text.strip(),
+            "section": section_label,
+            "part": part_label,
+            "subpart": subpart_label,
+            "markers": [marker["marker"] for marker in markers],
+        }
+
+
+if __name__ == "__main__":
+    chunker = MarkdownChunker()
+    chunks = chunker.chunk_markdown_file("filtered_markdown.md", output_path="chunks.json")
+    print(chunks[:3])
