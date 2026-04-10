@@ -1,8 +1,10 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
+    build:
+      context: ./db
     container_name: hipaa_rag_db
     restart: unless-stopped
+    command: ["postgres", "-c", "shared_preload_libraries=pg_textsearch"]
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-hipaa_rag}
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
