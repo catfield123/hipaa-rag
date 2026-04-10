@@ -15,8 +15,37 @@ services:
       context: ./backend
     container_name: hipaa_rag_backend
     restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/hipaa_rag}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_CHAT_MODEL=${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1536}
     depends_on:
       - db
+    command: >
+      sh -c "python -m app.wait_for_db &&
+             alembic upgrade head &&
+             uvicorn main:app --host 0.0.0.0 --port 8000"
+
+  ingest:
+    build:
+      context: ./backend
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/hipaa_rag}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_CHAT_MODEL=${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1536}
+      - HIPAA_PDF_PATH=/data/hipaa-combined.pdf
+    volumes:
+      - ${HIPAA_PDF_SOURCE:-/home/catfield123/Downloads/hipaa-combined.pdf}:/data/hipaa-combined.pdf:ro
+    depends_on:
+      - db
+    command: >
+      sh -c "python -m app.wait_for_db &&
+             alembic upgrade head &&
+             python -m app.ingest.run"
 
   frontend:
     build:
