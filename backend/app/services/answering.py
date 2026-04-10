@@ -111,7 +111,11 @@ class AnsweringService:
         if outline_follow_up is not None:
             return outline_follow_up
 
-        fallback = self._fallback_evidence_decision(intent=intent, evidence=evidence)
+        fallback = self._fallback_evidence_decision(
+            question=question,
+            intent=intent,
+            evidence=evidence,
+        )
         attempted_queries = self._sanitize_query_variants(attempted_queries)
         if not self.settings.openai_api_key:
             return fallback
@@ -500,6 +504,7 @@ class AnsweringService:
     def _fallback_evidence_decision(
         self,
         *,
+        question: str,
         intent: str,
         evidence: list[RetrievalEvidence],
     ) -> EvidenceDecision:
@@ -517,7 +522,7 @@ class AnsweringService:
                 missing_information=missing_information,
             )
 
-        if intent == "structure_lookup":
+        if intent == "structure_lookup" and self._should_return_raw_structure(question):
             return EvidenceDecision(
                 sufficient=bool(evidence),
                 rationale=(
@@ -614,15 +619,7 @@ class AnsweringService:
     ) -> bool:
         if not inferred_filters or not inferred_filters.part_number:
             return False
-        keywords = (
-            "contents",
-            "outline",
-            "list",
-            "subpart",
-            "sections",
-            "section headings",
-        )
-        return any(keyword in lowered_query for keyword in keywords)
+        return self._has_direct_structure_display_signal(lowered_query)
 
     def _is_direct_subpart_outline_request(
         self,
@@ -631,14 +628,7 @@ class AnsweringService:
     ) -> bool:
         if not inferred_filters or not inferred_filters.subpart:
             return False
-        keywords = (
-            "contents",
-            "outline",
-            "list",
-            "sections",
-            "section headings",
-        )
-        return any(keyword in lowered_query for keyword in keywords)
+        return self._has_direct_structure_display_signal(lowered_query)
 
     def _is_part_structural_reasoning_request(
         self,
@@ -680,6 +670,20 @@ class AnsweringService:
             or self._is_direct_part_outline_request(lowered_query, inferred_filters)
             or self._is_direct_subpart_outline_request(lowered_query, inferred_filters)
         )
+
+    def _has_direct_structure_display_signal(self, lowered_query: str) -> bool:
+        direct_phrases = (
+            "list",
+            "show",
+            "display",
+            "outline",
+            "contents",
+            "table of contents",
+            "section headings",
+            "all sections",
+            "which sections",
+        )
+        return any(phrase in lowered_query for phrase in direct_phrases)
 
     def _outline_sufficiency_decision(
         self,
