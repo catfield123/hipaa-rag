@@ -7,14 +7,14 @@ from app.schemas.retrieval import RetrievalEvidence
 
 
 class RagResponseBuilder:
-    """Build compact quotes and sources from retrieval evidence."""
+    """Build quotes and sources from full ranked retrieval evidence."""
 
     def build_quotes(self, evidence: list[RetrievalEvidence]) -> list[QuoteSpan]:
-        """Return up to three unique quote spans from the ranked evidence."""
+        """Return one quote span per unique chunk, in evidence order."""
 
         quotes: list[QuoteSpan] = []
         seen_chunk_ids: set[int] = set()
-        for item in evidence[:3]:
+        for item in evidence:
             if item.chunk_id in seen_chunk_ids:
                 continue
             seen_chunk_ids.add(item.chunk_id)
@@ -33,12 +33,15 @@ class RagResponseBuilder:
         return quotes
 
     def build_sources(self, evidence: list[RetrievalEvidence]) -> list[SourceItem]:
-        """Return up to five unique source entries from the ranked evidence."""
+        """Return one source row per unique chunk, aligned with ``build_quotes``."""
 
-        sources_map: dict[str, SourceItem] = {}
-        for item in evidence[:5]:
-            sources_map.setdefault(
-                item.path_text,
+        sources: list[SourceItem] = []
+        seen_chunk_ids: set[int] = set()
+        for item in evidence:
+            if item.chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(item.chunk_id)
+            sources.append(
                 SourceItem(
                     chunk_id=item.chunk_id,
                     path_text=item.path_text,
@@ -46,6 +49,6 @@ class RagResponseBuilder:
                     part=item.part,
                     subpart=item.subpart,
                     markers=item.markers,
-                ),
+                )
             )
-        return list(sources_map.values())
+        return sources
