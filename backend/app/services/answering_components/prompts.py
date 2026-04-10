@@ -44,31 +44,36 @@ RESEARCH_DECISION_SYSTEM_PROMPT = (
 
 FINAL_ANSWER_SYSTEM_PROMPT = (
     "You are in the final answer phase of a HIPAA answering agent. "
-    "Answer only from the provided evidence. "
-    "Stay strictly grounded in the retrieved database evidence. "
+    "Answer using only the regulatory excerpts supplied in the user message (the JSON list labeled with excerpts). "
+    "Stay strictly grounded in that material. "
     "Do not use your own HIPAA knowledge to fill gaps. "
-    "Do not mention any section, subsection, part, subpart, requirement, or factual claim unless it appears in the evidence. "
+    "Do not mention any section, subsection, part, subpart, requirement, or factual claim unless it appears in those excerpts. "
     "Do not infer missing citations. Do not add likely sections from memory. "
-    "If the evidence is insufficient, say so clearly instead of guessing. "
-    "If the user asks which sections apply and the evidence does not explicitly contain those sections, "
-    "say that the retrieved evidence is insufficient to identify the exact applicable sections. "
+    "If the supplied material is insufficient to answer, say so clearly instead of guessing. "
+    "If the user asks which sections apply and the supplied excerpts do not explicitly contain those sections, "
+    "say that the provided text does not identify the exact applicable sections. "
+    "In the reply visible to the user, use plain professional language. Do not use internal or technical terms such as "
+    "'evidence', 'retrieval', 'chunks', 'the database', 'RAG', or 'payload'. Prefer wording such as "
+    "'the provided regulatory text', 'these excerpts', 'the cited sections', 'based on the material provided', or "
+    "'the available text does not include …'. "
     "If the decision says wants_raw_structure=true, return the requested structural content directly and cleanly. "
     "Otherwise provide a concise direct answer followed by short supporting explanation. "
-    "When you present regulatory wording that comes from the evidence, reproduce each evidence item's `text` field "
+    "When you present regulatory wording from the supplied JSON, reproduce each item's `text` field "
     "exactly as provided. Do not replace missing parts with bracketed placeholders such as [conditions apply], "
     "[purposes], or similar invented fillers. Do not paraphrase inside passages presented as direct regulatory wording. "
     "If you summarize, label it explicitly as a summary separate from quoted text. "
-    "If a chunk's text is clearly truncated or incomplete in the evidence, say that the retrieved excerpt is partial "
-    "and quote only what appears in the evidence."
+    "If a passage is clearly truncated or incomplete in the supplied material, say that the excerpt is partial "
+    "and quote only what was provided."
 )
 
 # Extra constraints when the planner classified the question as asking for quotes / verbatim regulation text.
 FINAL_ANSWER_QUOTE_REQUEST_SUPPLEMENT = (
-    "The user's intent is to obtain verbatim regulatory text (citation / quote request). "
-    "For each relevant evidence item, show the `path_text` (or section plus markers) then the full `text` field "
+    "The user asked for verbatim regulatory text (citation / quote request). "
+    "For each relevant row in the supplied JSON, show the `path_text` (or section plus markers) then the full `text` field "
     "exactly as stored—no inline rewriting, no bracketed omissions, no '[conditions apply]' style shortcuts. "
-    "If multiple chunks apply, list them as separate blocks in evidence order. "
-    "If the database excerpt does not contain the full rule, state that explicitly after quoting what was retrieved."
+    "If multiple excerpts apply, list them as separate blocks in the order given below. "
+    "If an excerpt does not contain the full rule, say so in user-facing language after quoting what was provided "
+    "(without calling it 'evidence' or 'the database')."
 )
 
 
@@ -157,9 +162,9 @@ def build_final_answer_messages(
                 f"Question:\n{question}\n\n"
                 "Decision:\n"
                 f"{json.dumps(decision, ensure_ascii=True)}\n\n"
-                "Supported sections explicitly present in the evidence:\n"
+                "Section labels present in the excerpts below:\n"
                 f"{json.dumps(_build_supported_sections(evidence), ensure_ascii=True)}\n\n"
-                "Evidence:\n"
+                "Regulatory text excerpts (JSON):\n"
                 f"{json.dumps(evidence, ensure_ascii=True)}"
             ),
         },
