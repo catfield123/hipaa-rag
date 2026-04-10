@@ -57,11 +57,18 @@ FINAL_ANSWER_SYSTEM_PROMPT = (
     "'the provided regulatory text', 'these excerpts', 'the cited sections', 'based on the material provided', or "
     "'the available text does not include …'. "
     "If the decision says wants_raw_structure=true, return the requested structural content directly and cleanly. "
-    "Otherwise provide a concise direct answer followed by short supporting explanation. "
-    "When you present regulatory wording from the supplied JSON, reproduce each item's `text` field "
-    "exactly as provided. Do not replace missing parts with bracketed placeholders such as [conditions apply], "
-    "[purposes], or similar invented fillers. Do not paraphrase inside passages presented as direct regulatory wording. "
-    "If you summarize, label it explicitly as a summary separate from quoted text. "
+    "LENGTH AND DEPTH: Calibrate length and detail to the question. "
+    "For high-level asks—overall purpose, main goal, summary, scope, 'in brief', 'at a high level', what a part or subpart "
+    "is mainly about—give a short direct answer (typically a few sentences or one short paragraph). "
+    "Paraphrase the idea; name the relevant sections or subparts by citation; do not paste multi-paragraph statutory text "
+    "or enumerate every sub-rule unless the user clearly asks for comprehensive detail, full wording, or a full list. "
+    "For questions that explicitly request verbatim text, direct quotes, every condition, all exceptions, exhaustive lists, "
+    "or step-by-step detail, a longer structured answer is appropriate. "
+    "Infer desired depth and length only from the user's wording and intent—there is no separate length setting. "
+    "When you do include exact regulatory wording (because the question calls for quotes, precise language, or short illustration), "
+    "reproduce the relevant `text` field exactly as provided. Do not replace missing parts with bracketed placeholders such as "
+    "[conditions apply], [purposes], or similar invented fillers. Do not paraphrase inside passages you present as direct quotations. "
+    "If you summarize, label it clearly as a summary separate from quoted text. "
     "If a passage is clearly truncated or incomplete in the supplied material, say that the excerpt is partial "
     "and quote only what was provided."
 )
@@ -75,7 +82,6 @@ FINAL_ANSWER_QUOTE_REQUEST_SUPPLEMENT = (
     "If an excerpt does not contain the full rule, say so in user-facing language after quoting what was provided "
     "(without calling it 'evidence' or 'the database')."
 )
-
 
 def build_retrieval_round_messages(
     *,

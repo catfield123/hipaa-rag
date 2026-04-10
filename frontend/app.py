@@ -40,7 +40,7 @@ def ask_hipaa(question: str, include_debug: bool) -> tuple[str, str, str, str]:
 
     try:
         response = requests.post(
-            f"{BACKEND_URL}/chat/query",
+            f"{BACKEND_URL}/rag/query",
             json={"question": question, "include_debug": include_debug},
             timeout=60,
         )
