@@ -1,2 +1,2 @@
 gradio
-requests
+websocket-client

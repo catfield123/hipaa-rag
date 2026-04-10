@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_db_session
+from app.db import SessionLocal, get_db_session
 from app.schemas.chat import ChatQueryRequest, ChatQueryResponse
 from app.services.answering import AnsweringService
 from app.services.dependencies import get_answering_service, get_rag_response_builder
@@ -69,3 +70,65 @@ async def query_rag(
         intent=outcome.intent,
         retrieval_rounds=outcome.retrieval_rounds,
     )
+
+
+@router.websocket("/query/ws")
+async def query_rag_ws(websocket: WebSocket) -> None:
+    """Stream agent status updates over WebSocket, then return the same payload as POST /rag/query."""
+
+    await websocket.accept()
+    try:
+        raw = await websocket.receive_text()
+    except Exception:
+        await websocket.close(code=1008)
+        return
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        await websocket.send_json({"type": "error", "message": "Expected JSON with a question field."})
+        await websocket.close(code=1007)
+        return
+
+    try:
+        request = ChatQueryRequest.model_validate(payload)
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close(code=1007)
+        return
+
+    answering_service = get_answering_service()
+    rag_response_builder = get_rag_response_builder()
+    bm25_service = get_bm25_service()
+    dense_retriever = get_dense_retriever()
+    hybrid_retriever = get_hybrid_retriever()
+    structural_retriever = get_structural_content_retriever()
+
+    async def on_status(event: dict) -> None:
+        await websocket.send_json(event)
+
+    try:
+        async with SessionLocal() as session:
+            outcome = await answering_service.answer_question(
+                question=request.question,
+                session=session,
+                bm25_service=bm25_service,
+                dense_retriever=dense_retriever,
+                hybrid_retriever=hybrid_retriever,
+                structural_retriever=structural_retriever,
+                on_status=on_status,
+            )
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close(code=1011)
+        return
+
+    response = ChatQueryResponse(
+        answer=outcome.answer,
+        quotes=rag_response_builder.build_quotes(outcome.evidence),
+        sources=rag_response_builder.build_sources(outcome.evidence),
+        intent=outcome.intent,
+        retrieval_rounds=outcome.retrieval_rounds,
+    )
+    await websocket.send_json({"type": "result", **response.model_dump(mode="json")})
+    await websocket.close(code=1000)

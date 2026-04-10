@@ -1,9 +1,29 @@
+import json
 import os
 
 import gradio as gr
-import requests
+import websocket
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
+# Long-running retrieval + LLM; `connect` timeout is separate (seconds).
+_WS_RECV_TIMEOUT_SEC = 600
+
+
+def _http_to_ws(base_url: str) -> str:
+    u = base_url.strip().rstrip("/")
+    if u.startswith("https://"):
+        return "wss://" + u[8:]
+    if u.startswith("http://"):
+        return "ws://" + u[7:]
+    return u
+
+
+def _rag_ws_url() -> str:
+    return f"{_http_to_ws(BACKEND_URL)}/rag/query/ws"
+
+
+def _format_status_line(message: str) -> str:
+    return f"*Сейчас:* {message}"
 
 
 def _render_reference_label(item: dict) -> str:
@@ -30,44 +50,56 @@ def _render_sources(sources: list[dict]) -> str:
     return "\n".join(rendered)
 
 
-def ask_hipaa(question: str) -> tuple[str, str, str]:
-    question = question.strip()
-    if not question:
-        return "", "", "Введите вопрос"
-
-    try:
-        response = requests.post(
-            f"{BACKEND_URL}/rag/query",
-            json={"question": question},
-            timeout=60,
-        )
-        response.raise_for_status()
-        data = response.json()
-        answer = data.get("answer", "")
-        quotes = data.get("quotes", [])
-        sources = data.get("sources", [])
-        quotes_text = _render_quotes(quotes) if quotes else ""
-        sources_text = _render_sources(sources) if sources else ""
-        return answer, quotes_text, sources_text
-    except Exception as exc:
-        return "", "", f"Ошибка запроса: {exc}"
-
-
 def _run_query(question: str):
-    """First yield disables the button only; skip other outputs to avoid heavy Markdown re-renders while waiting."""
+    """Stream agent status into the answer field via WebSocket; final yield fills answer, quotes, sources."""
     yield (
         gr.skip(),
         gr.skip(),
         gr.skip(),
         gr.update(interactive=False),
     )
-    answer, quotes_text, sources_text = ask_hipaa(question)
-    yield (
-        answer,
-        quotes_text,
-        sources_text,
-        gr.update(interactive=True),
-    )
+    q = (question or "").strip()
+    if not q:
+        yield ("", "", "Введите вопрос", gr.update(interactive=True))
+        return
+
+    ws: websocket.WebSocket | None = None
+    try:
+        ws = websocket.WebSocket()
+        ws.connect(_rag_ws_url(), timeout=30)
+        ws.settimeout(_WS_RECV_TIMEOUT_SEC)
+        ws.send(json.dumps({"question": q}))
+        while True:
+            raw = ws.recv()
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            msg = json.loads(raw)
+            mtype = msg.get("type")
+            if mtype == "status":
+                line = _format_status_line(str(msg.get("message") or ""))
+                yield (line, gr.skip(), gr.skip(), gr.update(interactive=False))
+            elif mtype == "result":
+                answer = str(msg.get("answer") or "")
+                quotes = msg.get("quotes") or []
+                sources = msg.get("sources") or []
+                quotes_text = _render_quotes(quotes) if quotes else ""
+                sources_text = _render_sources(sources) if sources else ""
+                yield (answer, quotes_text, sources_text, gr.update(interactive=True))
+                return
+            elif mtype == "error":
+                err = str(msg.get("message") or "ошибка")
+                yield ("", "", f"Ошибка: {err}", gr.update(interactive=True))
+                return
+    except TimeoutError:
+        yield ("", "", "Превышено время ожидания ответа.", gr.update(interactive=True))
+    except Exception as exc:
+        yield ("", "", f"Ошибка запроса: {exc}", gr.update(interactive=True))
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
 
 
 with gr.Blocks() as demo:

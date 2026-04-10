@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,6 +39,28 @@ from app.services.retrieval_components import (
 
 logger = logging.getLogger(__name__)
 
+AgentStatusEmitter = Callable[[dict[str, Any]], Awaitable[None]]
+
+_TOOL_LABELS_RU: dict[str, str] = {
+    "hybrid_search": "гибридный поиск",
+    "bm25_search": "точное совпадение (BM25)",
+    "lookup_structural_content": "структурный контент",
+    "get_section_text": "текст секции",
+    "list_part_outline": "оглавление части",
+    "list_subpart_outline": "оглавление подчасти",
+}
+
+
+def _tool_label_ru(function_name: str) -> str:
+    return _TOOL_LABELS_RU.get(function_name, function_name)
+
+
+def _truncate_text(text: str, *, limit: int = 280) -> str:
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 1] + "…"
+
 
 @dataclass(slots=True)
 class FunctionAgentResult:
@@ -70,10 +93,37 @@ class AnsweringService:
         dense_retriever: DenseRetriever,
         hybrid_retriever: HybridRetriever,
         structural_retriever: StructuralContentRetriever,
+        on_status: AgentStatusEmitter | None = None,
     ) -> FunctionAgentResult:
         """Answer a question through explicit retrieval and decision function loops."""
 
         self._ensure_openai_configuration()
+        max_rounds = self.settings.agent_max_rounds
+
+        async def emit(
+            *,
+            phase: str,
+            message: str,
+            round_number: int | None = None,
+            tool: str | None = None,
+        ) -> None:
+            if on_status is None:
+                return
+            payload: dict[str, Any] = {
+                "type": "status",
+                "phase": phase,
+                "message": message,
+            }
+            if round_number is not None:
+                payload["round"] = round_number
+            if tool is not None:
+                payload["tool"] = tool
+            await on_status(payload)
+
+        await emit(
+            phase="start",
+            message="Подготовка агента и поиска по базе HIPAA…",
+        )
         function_executor = RetrievalFunctionExecutor(
             session=session,
             bm25_service=bm25_service,
@@ -90,7 +140,14 @@ class AnsweringService:
         latest_decision: ResearchDecision | None = None
         max_queries_per_round = max(1, self.settings.query_rewrite_limit)
 
-        for round_number in range(1, self.settings.agent_max_rounds + 1):
+        for round_number in range(1, max_rounds + 1):
+            await emit(
+                phase="plan",
+                round_number=round_number,
+                message=(
+                    f"Раунд {round_number} из {max_rounds}: выбор запросов к инструментам поиска…"
+                ),
+            )
             retrieval_messages = build_retrieval_round_messages(
                 question=question,
                 evidence=[item.model_dump() for item in all_evidence],
@@ -121,6 +178,15 @@ class AnsweringService:
 
             for function_call in function_calls:
                 parsed_arguments = _safe_parse_arguments(function_call.function.arguments)
+                tool_name = function_call.function.name
+                await emit(
+                    phase="retrieve",
+                    round_number=round_number,
+                    tool=tool_name,
+                    message=(
+                        f"Раунд {round_number}: поиск — {_tool_label_ru(tool_name)}…"
+                    ),
+                )
                 try:
                     execution = await function_executor.execute(
                         function_call.function.name,
@@ -149,6 +215,11 @@ class AnsweringService:
                     )
                 )
 
+            await emit(
+                phase="decide",
+                round_number=round_number,
+                message=f"Раунд {round_number}: оценка, достаточно ли источников для ответа…",
+            )
             latest_decision = await self._decide_next_step(
                 question=question,
                 evidence=all_evidence,
@@ -156,6 +227,10 @@ class AnsweringService:
             )
 
             if not latest_decision.continue_retrieval:
+                await emit(
+                    phase="answer",
+                    message="Формирование итогового ответа по найденным источникам…",
+                )
                 answer = await self._generate_final_answer(
                     question=question,
                     decision=latest_decision,
@@ -168,6 +243,22 @@ class AnsweringService:
                     retrieval_rounds=retrieval_rounds,
                 )
 
+            rationale_snippet = _truncate_text(latest_decision.rationale)
+            await emit(
+                phase="decide",
+                round_number=round_number,
+                message=(
+                    f"Раунд {round_number}: нужны дополнительные источники. "
+                    f"Обоснование: {rationale_snippet}"
+                ),
+            )
+
+        await emit(
+            phase="answer",
+            message=(
+                f"Достигнут лимит раундов ({max_rounds}). Формирование ответа по имеющимся источникам…"
+            ),
+        )
         forced_decision = latest_decision or ResearchDecision(
             intent=QueryIntentEnum.GENERAL,
             wants_raw_structure=False,
