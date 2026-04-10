@@ -47,7 +47,6 @@ class FunctionAgentResult:
     intent: QueryIntentEnum
     evidence: list[RetrievalEvidence]
     retrieval_rounds: int
-    debug_rounds: list[dict[str, object]]
 
 
 class AnsweringService:
@@ -87,7 +86,6 @@ class AnsweringService:
 
         all_evidence: list[RetrievalEvidence] = []
         retrieval_history: list[dict[str, object]] = []
-        debug_rounds: list[dict[str, object]] = []
         retrieval_rounds = 0
         latest_decision: ResearchDecision | None = None
         max_queries_per_round = max(1, self.settings.query_rewrite_limit)
@@ -110,7 +108,7 @@ class AnsweringService:
             )
             message = response.choices[0].message
             raw_function_calls = message.tool_calls or []
-            function_calls, skipped_function_calls = _prepare_function_calls(
+            function_calls, _ = _prepare_function_calls(
                 raw_function_calls,
                 max_queries=max_queries_per_round,
             )
@@ -120,15 +118,6 @@ class AnsweringService:
                 )
 
             retrieval_rounds = round_number
-            round_debug: dict[str, object] = {
-                "round": round_number,
-                "query_budget": max_queries_per_round,
-                "requested_function_call_count": len(raw_function_calls),
-                "executed_function_call_count": len(function_calls),
-                "function_calls": [],
-            }
-            if skipped_function_calls:
-                round_debug["skipped_function_calls"] = skipped_function_calls
 
             for function_call in function_calls:
                 parsed_arguments = _safe_parse_arguments(function_call.function.arguments)
@@ -139,14 +128,6 @@ class AnsweringService:
                     )
                 except Exception as exc:
                     logger.exception("Function execution failed for %s", function_call.function.name)
-                    execution_payload = {
-                        "function_name": function_call.function.name,
-                        "function_args": parsed_arguments,
-                        "error": str(exc),
-                    }
-                    cast_calls = round_debug["function_calls"]
-                    assert isinstance(cast_calls, list)
-                    cast_calls.append(execution_payload)
                     retrieval_history.append(
                         _build_retrieval_history_entry(
                             round_number=round_number,
@@ -159,15 +140,6 @@ class AnsweringService:
                     continue
 
                 all_evidence = _merge_evidence(all_evidence, execution.evidence)
-                cast_calls = round_debug["function_calls"]
-                assert isinstance(cast_calls, list)
-                cast_calls.append(
-                    {
-                        "function_name": execution.function_name,
-                        "function_args": execution.function_args,
-                        "result_count": len(execution.evidence),
-                    }
-                )
                 retrieval_history.append(
                     _build_retrieval_history_entry(
                         round_number=round_number,
@@ -182,9 +154,6 @@ class AnsweringService:
                 evidence=all_evidence,
                 round_number=round_number,
             )
-            round_debug["total_evidence_count"] = len(all_evidence)
-            round_debug["decision"] = latest_decision.model_dump()
-            debug_rounds.append(round_debug)
 
             if not latest_decision.continue_retrieval:
                 answer = await self._generate_final_answer(
@@ -197,7 +166,6 @@ class AnsweringService:
                     intent=latest_decision.intent,
                     evidence=all_evidence,
                     retrieval_rounds=retrieval_rounds,
-                    debug_rounds=debug_rounds,
                 )
 
         forced_decision = latest_decision or ResearchDecision(
@@ -217,7 +185,6 @@ class AnsweringService:
             intent=forced_decision.intent,
             evidence=all_evidence,
             retrieval_rounds=retrieval_rounds,
-            debug_rounds=debug_rounds,
         )
 
     def _ensure_openai_configuration(self) -> None:

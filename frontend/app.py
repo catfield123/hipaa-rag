@@ -1,4 +1,3 @@
-import json
 import os
 
 import gradio as gr
@@ -33,15 +32,15 @@ def _render_sources(sources: list[dict]) -> str:
     return "Sources:\n" + "\n".join(rendered)
 
 
-def ask_hipaa(question: str, include_debug: bool) -> tuple[str, str, str, str]:
+def ask_hipaa(question: str) -> tuple[str, str, str]:
     question = question.strip()
     if not question:
-        return "", "", "", "Введите вопрос"
+        return "", "", "Введите вопрос"
 
     try:
         response = requests.post(
             f"{BACKEND_URL}/rag/query",
-            json={"question": question, "include_debug": include_debug},
+            json={"question": question},
             timeout=60,
         )
         response.raise_for_status()
@@ -51,28 +50,23 @@ def ask_hipaa(question: str, include_debug: bool) -> tuple[str, str, str, str]:
         sources = data.get("sources", [])
         quotes_text = _render_quotes(quotes) if quotes else ""
         sources_text = _render_sources(sources) if sources else ""
-        debug_text = ""
-        if include_debug and data.get("debug"):
-            debug_text = f"```json\n{json.dumps(data['debug'], indent=2)}\n```"
-        return answer, quotes_text, sources_text, debug_text
+        return answer, quotes_text, sources_text
     except Exception as exc:
-        return "", "", "", f"Ошибка запроса: {exc}"
+        return "", "", f"Ошибка запроса: {exc}"
 
 
 with gr.Blocks() as demo:
     gr.Markdown("## HIPAA RAG")
     gr.Markdown("Задавайте вопросы по HIPAA. Интерфейс показывает ответ, цитаты и источники без истории чата.")
     question_input = gr.Textbox(label="Вопрос", placeholder="Например: Does HIPAA mention encryption best practices?")
-    debug_checkbox = gr.Checkbox(label="Показать debug retrieval", value=False)
     answer_box = gr.Markdown(label="Ответ")
     quotes_box = gr.Markdown(label="Цитаты")
     sources_box = gr.Markdown(label="Источники")
-    debug_box = gr.Markdown(label="Debug")
     submit = gr.Button("Спросить")
     submit.click(
         ask_hipaa,
-        inputs=[question_input, debug_checkbox],
-        outputs=[answer_box, quotes_box, sources_box, debug_box],
+        inputs=[question_input],
+        outputs=[answer_box, quotes_box, sources_box],
     )
 
 

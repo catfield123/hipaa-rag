@@ -61,13 +61,6 @@ async def query_rag(
         hybrid_retriever=hybrid_retriever,
         structural_retriever=structural_retriever,
     )
-    debug_payload = None
-    if payload.include_debug:
-        debug_payload = {
-            "intent": outcome.intent,
-            "evidence": [item.model_dump() for item in outcome.evidence],
-            "rounds": outcome.debug_rounds,
-        }
 
     return ChatQueryResponse(
         answer=outcome.answer,
@@ -75,5 +68,4 @@ async def query_rag(
         sources=rag_response_builder.build_sources(outcome.evidence),
         intent=outcome.intent,
         retrieval_rounds=outcome.retrieval_rounds,
-        debug=debug_payload,
     )

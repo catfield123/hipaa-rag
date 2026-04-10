@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 from app.schemas.types import QueryIntentEnum
@@ -37,7 +35,6 @@ class ChatQueryRequest(BaseModel):
     """Incoming payload for the main chat endpoint."""
 
     question: str = Field(min_length=3)
-    include_debug: bool = False
 
 
 class ChatQueryResponse(BaseModel):
@@ -48,4 +45,3 @@ class ChatQueryResponse(BaseModel):
     sources: list[SourceItem] = Field(default_factory=list)
     intent: QueryIntentEnum
     retrieval_rounds: int
-    debug: dict[str, Any] | None = None
