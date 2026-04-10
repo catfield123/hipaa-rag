@@ -17,7 +17,7 @@ from app.services.embeddings import EmbeddingService
 from app.services.text_utils import estimate_token_count
 
 
-PART_LABEL_RE = re.compile(r"^PART\s+(\d+)\b(?:\s+(.*))?$")
+PART_LABEL_RE = re.compile(r"^PART\s+(\d{3})(?:\s*[-\s]?\s*(.*))?$", re.IGNORECASE)
 SUBPART_LABEL_RE = re.compile(r"^Subpart\s+([A-Z])(?:\s*-\s*(.*))?$", re.IGNORECASE)
 SECTION_LABEL_RE = re.compile(r"^§\s*(\d+\.\d+)\b(?:\s+(.*))?$")
 BM25_INDEX_NAME = "retrieval_chunks_search_text_bm25_idx"

@@ -7,7 +7,7 @@ from typing import Any
 
 
 class MarkdownChunker:
-    PART_RE = re.compile(r"^PART\s+(\d+)\b(.*)")
+    PART_RE = re.compile(r"^PART\s+(\d{3})(?:\s*[-\s]?\s*(.*))?$", re.IGNORECASE)
     SUBPART_RE = re.compile(r"^Subpart\s+([A-Z])(?:[-\s]+)(.*)")
     SECTION_RE = re.compile(r"^§\s*(\d+\.\d+)\b\s+([A-Z].*)")
     COMPOUND_MARKERS_RE = re.compile(r"^((?:\([A-Za-z0-9ivxlcdmIVXLCDM]+\))+)\s*(.*)$")
@@ -48,7 +48,8 @@ class MarkdownChunker:
             part_match = self.PART_RE.match(line)
             if part_match:
                 part_no, part_title = part_match.groups()
-                current_part_label = f"PART {part_no} {part_title.strip()}".strip()
+                part_title = (part_title or "").strip()
+                current_part_label = f"PART {part_no} {part_title}".strip()
                 current_subpart_label = None
                 current_section_label = None
                 marker_stack = []
