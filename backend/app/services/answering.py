@@ -44,6 +44,7 @@ class AnsweringService:
                     "subpart_outline",
                 ],
                 "part_or_subpart_outlines_can_answer_high_level_overview_questions": True,
+                "return_raw_structure_only_for_explicit_show_list_full_text_requests": True,
                 "optional_structural_filters": {
                     "part_number": "string | null",
                     "section_number": "string | null",
@@ -61,9 +62,10 @@ class AnsweringService:
                     "Rewrite the user query into retrieval queries. "
                     "Choose bm25_only for literal or mention checks. "
                     "Choose hybrid for semantic or multi-section questions. "
-                    "Choose structure_lookup when the user wants the full text of a specific section, "
-                    "a list of sections within a subpart, a part outline with subparts and sections, "
-                    "or a high-level overview question that can be answered from section titles. "
+                    "Choose structure_lookup when the user explicitly wants the full text of a specific section, "
+                    "a list of sections within a subpart, or a part outline with subparts and sections. "
+                    "For high-level overview or purpose questions, structure_lookup evidence may still be useful, "
+                    "but the final answer should be synthesized rather than returning raw structure text. "
                     "If the user asks about a specific part/section/subpart/paragraph, "
                     "add filters to narrow retrieval."
                 ),
@@ -93,7 +95,7 @@ class AnsweringService:
         attempted_queries: list[QueryVariant],
         retrieval_round: int,
     ) -> EvidenceDecision:
-        if intent == "structure_lookup" and any(
+        if intent == "structure_lookup" and self._should_return_raw_structure(question) and any(
             item.retrieval_mode == "structure_lookup" for item in evidence
         ):
             return EvidenceDecision(
@@ -204,7 +206,7 @@ class AnsweringService:
         if not evidence:
             return "I could not find enough support in the provided HIPAA text to answer confidently."
 
-        if intent == "structure_lookup":
+        if intent == "structure_lookup" and self._should_return_raw_structure(question):
             return self._render_structural_content(evidence)
 
         if not self.settings.openai_api_key:
@@ -280,7 +282,7 @@ class AnsweringService:
                 ],
             )
 
-        if self._is_part_outline_request(lowered, inferred_filters):
+        if self._is_direct_part_outline_request(lowered, inferred_filters):
             return QueryPlan(
                 intent="structure_lookup",
                 queries=[
@@ -295,7 +297,7 @@ class AnsweringService:
                 ],
             )
 
-        if self._is_subpart_outline_request(lowered, inferred_filters):
+        if self._is_direct_subpart_outline_request(lowered, inferred_filters):
             return QueryPlan(
                 intent="structure_lookup",
                 queries=[
@@ -308,6 +310,54 @@ class AnsweringService:
                         filters=inferred_filters,
                     )
                 ],
+            )
+
+        if self._is_part_structural_reasoning_request(lowered, inferred_filters):
+            return QueryPlan(
+                intent="general",
+                queries=self._sanitize_query_variants(
+                    [
+                        QueryVariant(
+                            text=exact_query,
+                            mode="structure_lookup",
+                            structure_target="part_outline",
+                            strategy="part_outline_reasoning",
+                            reason="Use the part outline as evidence for a high-level answer.",
+                            filters=inferred_filters,
+                        ),
+                        QueryVariant(
+                            text=exact_query,
+                            mode="hybrid",
+                            strategy="part_semantic_follow_up",
+                            reason="Retrieve supporting section text within the cited part.",
+                            filters=inferred_filters,
+                        ),
+                    ]
+                ),
+            )
+
+        if self._is_subpart_structural_reasoning_request(lowered, inferred_filters):
+            return QueryPlan(
+                intent="general",
+                queries=self._sanitize_query_variants(
+                    [
+                        QueryVariant(
+                            text=exact_query,
+                            mode="structure_lookup",
+                            structure_target="subpart_outline",
+                            strategy="subpart_outline_reasoning",
+                            reason="Use the subpart outline as evidence for a high-level answer.",
+                            filters=inferred_filters,
+                        ),
+                        QueryVariant(
+                            text=exact_query,
+                            mode="hybrid",
+                            strategy="subpart_semantic_follow_up",
+                            reason="Retrieve supporting section text within the cited subpart.",
+                            filters=inferred_filters,
+                        ),
+                    ]
+                ),
             )
 
         if any(word in lowered for word in ("does", "mention", "is there", "does hipaa")):
@@ -407,7 +457,7 @@ class AnsweringService:
         intent: str,
         evidence: list[RetrievalEvidence],
     ) -> str:
-        if intent == "structure_lookup":
+        if intent == "structure_lookup" and self._should_return_raw_structure(question):
             return self._render_structural_content(evidence)
 
         if intent == "existence_check":
@@ -557,7 +607,7 @@ class AnsweringService:
         )
         return any(phrase in lowered_query for phrase in phrases)
 
-    def _is_part_outline_request(
+    def _is_direct_part_outline_request(
         self,
         lowered_query: str,
         inferred_filters: StructuralFilters | None,
@@ -571,15 +621,10 @@ class AnsweringService:
             "subpart",
             "sections",
             "section headings",
-            "purpose",
-            "overview",
-            "cover",
-            "covers",
-            "about",
         )
         return any(keyword in lowered_query for keyword in keywords)
 
-    def _is_subpart_outline_request(
+    def _is_direct_subpart_outline_request(
         self,
         lowered_query: str,
         inferred_filters: StructuralFilters | None,
@@ -592,6 +637,17 @@ class AnsweringService:
             "list",
             "sections",
             "section headings",
+        )
+        return any(keyword in lowered_query for keyword in keywords)
+
+    def _is_part_structural_reasoning_request(
+        self,
+        lowered_query: str,
+        inferred_filters: StructuralFilters | None,
+    ) -> bool:
+        if not inferred_filters or not inferred_filters.part_number:
+            return False
+        keywords = (
             "purpose",
             "overview",
             "cover",
@@ -599,6 +655,31 @@ class AnsweringService:
             "about",
         )
         return any(keyword in lowered_query for keyword in keywords)
+
+    def _is_subpart_structural_reasoning_request(
+        self,
+        lowered_query: str,
+        inferred_filters: StructuralFilters | None,
+    ) -> bool:
+        if not inferred_filters or not inferred_filters.subpart:
+            return False
+        keywords = (
+            "purpose",
+            "overview",
+            "cover",
+            "covers",
+            "about",
+        )
+        return any(keyword in lowered_query for keyword in keywords)
+
+    def _should_return_raw_structure(self, question: str) -> bool:
+        lowered_query = question.lower()
+        inferred_filters = self._infer_structural_filters(question)
+        return (
+            self._is_section_text_request(lowered_query, inferred_filters)
+            or self._is_direct_part_outline_request(lowered_query, inferred_filters)
+            or self._is_direct_subpart_outline_request(lowered_query, inferred_filters)
+        )
 
     def _outline_sufficiency_decision(
         self,
