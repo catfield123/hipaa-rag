@@ -108,6 +108,7 @@ def _build_structural_content(
                 "part_number": part_number,
                 "subpart_key": subpart_key,
                 "section_number": section_number,
+                "section_title": _parse_section_label(section_label)[1],
                 "texts": [],
             },
         )
@@ -133,10 +134,22 @@ def _build_structural_content(
                         "sections": [],
                     },
                 )
-                if section_label not in subpart_entry["sections"]:
-                    subpart_entry["sections"].append(section_label)
-            elif section_label not in part_entry["direct_sections"]:
-                part_entry["direct_sections"].append(section_label)
+                if section_label not in {item["section"] for item in subpart_entry["sections"]}:
+                    subpart_entry["sections"].append(
+                        {
+                            "section": section_label,
+                            "section_number": section_number,
+                            "section_title": _parse_section_label(section_label)[1],
+                        }
+                    )
+            elif section_label not in {item["section"] for item in part_entry["direct_sections"]}:
+                part_entry["direct_sections"].append(
+                    {
+                        "section": section_label,
+                        "section_number": section_number,
+                        "section_title": _parse_section_label(section_label)[1],
+                    }
+                )
 
         if subpart_label:
             subpart_entry = subpart_groups.setdefault(
@@ -150,8 +163,14 @@ def _build_structural_content(
                     "sections": [],
                 },
             )
-            if section_label not in subpart_entry["sections"]:
-                subpart_entry["sections"].append(section_label)
+            if section_label not in {item["section"] for item in subpart_entry["sections"]}:
+                subpart_entry["sections"].append(
+                    {
+                        "section": section_label,
+                        "section_number": section_number,
+                        "section_title": _parse_section_label(section_label)[1],
+                    }
+                )
 
     structural_items: list[StructuralContent] = []
 
@@ -172,13 +191,14 @@ def _build_structural_content(
                     "source_mode": "markdown",
                     "source_path": source_path,
                     "content_type": "section_text",
+                    "section_title": section_entry["section_title"],
                 },
             )
         )
 
     for subpart_entry in subpart_groups.values():
         lines = [value for value in [subpart_entry["part"], subpart_entry["subpart"], ""] if value is not None]
-        lines.extend(str(section) for section in subpart_entry["sections"])
+        lines.extend(str(section["section"]) for section in subpart_entry["sections"])
         structural_items.append(
             StructuralContent(
                 content_type="subpart_outline",
@@ -195,6 +215,7 @@ def _build_structural_content(
                     "source_mode": "markdown",
                     "source_path": source_path,
                     "content_type": "subpart_outline",
+                    "sections": subpart_entry["sections"],
                 },
             )
         )
@@ -203,12 +224,12 @@ def _build_structural_content(
         lines = [str(part_entry["part"]), ""]
         if part_entry["direct_sections"]:
             lines.extend(["Sections with no Subpart"])
-            lines.extend(str(section) for section in part_entry["direct_sections"])
+            lines.extend(str(section["section"]) for section in part_entry["direct_sections"])
             lines.append("")
 
         for subpart_entry in part_entry["subparts"].values():
             lines.append(str(subpart_entry["subpart"]))
-            lines.extend(str(section) for section in subpart_entry["sections"])
+            lines.extend(str(section["section"]) for section in subpart_entry["sections"])
             lines.append("")
 
         structural_items.append(
@@ -227,6 +248,8 @@ def _build_structural_content(
                     "source_mode": "markdown",
                     "source_path": source_path,
                     "content_type": "part_outline",
+                    "direct_sections": part_entry["direct_sections"],
+                    "subparts": list(part_entry["subparts"].values()),
                 },
             )
         )

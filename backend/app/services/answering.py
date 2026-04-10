@@ -43,6 +43,7 @@ class AnsweringService:
                     "part_outline",
                     "subpart_outline",
                 ],
+                "part_or_subpart_outlines_can_answer_high_level_overview_questions": True,
                 "optional_structural_filters": {
                     "part_number": "string | null",
                     "section_number": "string | null",
@@ -61,7 +62,8 @@ class AnsweringService:
                     "Choose bm25_only for literal or mention checks. "
                     "Choose hybrid for semantic or multi-section questions. "
                     "Choose structure_lookup when the user wants the full text of a specific section, "
-                    "a list of sections within a subpart, or a part outline with subparts and sections. "
+                    "a list of sections within a subpart, a part outline with subparts and sections, "
+                    "or a high-level overview question that can be answered from section titles. "
                     "If the user asks about a specific part/section/subpart/paragraph, "
                     "add filters to narrow retrieval."
                 ),
@@ -99,6 +101,14 @@ class AnsweringService:
                 rationale="Direct structural content was found for the request.",
             )
 
+        outline_sufficiency = self._outline_sufficiency_decision(question, evidence)
+        if outline_sufficiency is not None:
+            return outline_sufficiency
+
+        outline_follow_up = self._outline_follow_up_decision(question, evidence)
+        if outline_follow_up is not None:
+            return outline_follow_up
+
         fallback = self._fallback_evidence_decision(intent=intent, evidence=evidence)
         attempted_queries = self._sanitize_query_variants(attempted_queries)
         if not self.settings.openai_api_key:
@@ -125,6 +135,8 @@ class AnsweringService:
                     "part_outline",
                     "subpart_outline",
                 ],
+                "part_or_subpart_outlines_can_answer_high_level_overview_questions": True,
+                "if_outline_titles_reveal_the_best_follow_up_section_then_request_section_text": True,
                 "optional_structural_filters": {
                     "part_number": "string | null",
                     "section_number": "string | null",
@@ -161,7 +173,9 @@ class AnsweringService:
                     "Return JSON only. Decide whether the currently retrieved evidence is enough to answer "
                     "the user's question. If yes, set sufficient=true and next_queries=[]. "
                     "If no, explain what is missing and propose the next retrieval queries. "
-                    "Use structure_lookup when the missing information is a full section text or an outline."
+                    "Use structure_lookup when the missing information is a full section text or an outline. "
+                    "A part or subpart outline can be sufficient for high-level purpose, scope, coverage, or "
+                    "organization questions when the section titles clearly answer the question."
                 ),
             },
             {
@@ -204,6 +218,7 @@ class AnsweringService:
                 "section": item.section,
                 "markers": item.markers,
                 "text": item.text,
+                "metadata": item.metadata,
             }
             for item in evidence[:6]
         ]
@@ -215,6 +230,7 @@ class AnsweringService:
                 "answer_only_from_evidence": True,
                 "say_not_found_if_insufficient": True,
                 "be_explicit_for_negative_questions": True,
+                "part_or_subpart_outlines_can_support_high_level_answers": True,
             },
         }
         messages = [
@@ -426,6 +442,7 @@ class AnsweringService:
                 "retrieval_mode": item.retrieval_mode,
                 "score": item.score,
                 "text": item.text,
+                "metadata": item.metadata,
             }
             for item in evidence[:limit]
         ]
@@ -547,7 +564,19 @@ class AnsweringService:
     ) -> bool:
         if not inferred_filters or not inferred_filters.part_number:
             return False
-        keywords = ("contents", "outline", "list", "subpart", "sections", "section headings")
+        keywords = (
+            "contents",
+            "outline",
+            "list",
+            "subpart",
+            "sections",
+            "section headings",
+            "purpose",
+            "overview",
+            "cover",
+            "covers",
+            "about",
+        )
         return any(keyword in lowered_query for keyword in keywords)
 
     def _is_subpart_outline_request(
@@ -557,5 +586,150 @@ class AnsweringService:
     ) -> bool:
         if not inferred_filters or not inferred_filters.subpart:
             return False
-        keywords = ("contents", "outline", "list", "sections", "section headings")
+        keywords = (
+            "contents",
+            "outline",
+            "list",
+            "sections",
+            "section headings",
+            "purpose",
+            "overview",
+            "cover",
+            "covers",
+            "about",
+        )
         return any(keyword in lowered_query for keyword in keywords)
+
+    def _outline_sufficiency_decision(
+        self,
+        question: str,
+        evidence: list[RetrievalEvidence],
+    ) -> EvidenceDecision | None:
+        structural_outlines = [
+            item
+            for item in evidence
+            if item.retrieval_mode == "structure_lookup"
+            and item.metadata.get("content_type") in {"part_outline", "subpart_outline"}
+        ]
+        if not structural_outlines:
+            return None
+
+        lowered_question = question.lower()
+        if not any(keyword in lowered_question for keyword in ("purpose", "overview", "cover", "covers", "about")):
+            return None
+
+        for item in structural_outlines:
+            matching_sections = self._best_outline_sections(question, item)
+            if matching_sections:
+                section_labels = ", ".join(section["section"] for section in matching_sections[:2])
+                return EvidenceDecision(
+                    sufficient=True,
+                    rationale=(
+                        "The structural outline is sufficient for a high-level answer because the section titles "
+                        f"directly indicate the relevant topic, including {section_labels}."
+                    ),
+                )
+        return None
+
+    def _outline_follow_up_decision(
+        self,
+        question: str,
+        evidence: list[RetrievalEvidence],
+    ) -> EvidenceDecision | None:
+        structural_outlines = [
+            item
+            for item in evidence
+            if item.retrieval_mode == "structure_lookup"
+            and item.metadata.get("content_type") in {"part_outline", "subpart_outline"}
+        ]
+        if not structural_outlines:
+            return None
+
+        next_queries: list[QueryVariant] = []
+        missing_information: list[str] = []
+        for item in structural_outlines:
+            for section in self._best_outline_sections(question, item)[:2]:
+                section_number = section.get("section_number")
+                if not section_number:
+                    continue
+                next_queries.append(
+                    QueryVariant(
+                        text=f"{section_number} {section.get('section_title') or ''}".strip(),
+                        mode="structure_lookup",
+                        structure_target="section_text",
+                        strategy="outline_to_section_text",
+                        reason="The outline suggests this section is most likely to contain the answer.",
+                        filters=StructuralFilters(section_number=section_number),
+                    )
+                )
+                missing_information.append(
+                    f"Need the full text of § {section_number} to answer more precisely."
+                )
+
+        next_queries = self._sanitize_query_variants(next_queries)
+        if not next_queries:
+            return None
+        return EvidenceDecision(
+            sufficient=False,
+            rationale="The outline identified likely relevant sections, but the full section text is needed.",
+            missing_information=unique_preserve_order(missing_information),
+            next_queries=next_queries,
+        )
+
+    def _best_outline_sections(
+        self,
+        question: str,
+        evidence: RetrievalEvidence,
+    ) -> list[dict[str, object]]:
+        candidates = self._outline_sections(evidence)
+        if not candidates:
+            return []
+
+        question_tokens = set(tokenize(question))
+        if not question_tokens:
+            question_tokens = {token.lower() for token in re.findall(r"[a-z][a-z0-9']*", question.lower())}
+
+        ranked: list[tuple[int, dict[str, object]]] = []
+        for section in candidates:
+            section_title = str(section.get("section_title") or "")
+            title_tokens = set(tokenize(section_title))
+            score = len(question_tokens & title_tokens)
+            if "purpose" in question.lower() and "purpose" in section_title.lower():
+                score += 3
+            if "definition" in question.lower() and "definition" in section_title.lower():
+                score += 3
+            if "scope" in question.lower() and "scope" in section_title.lower():
+                score += 3
+            if score > 0:
+                ranked.append((score, section))
+
+        ranked.sort(
+            key=lambda item: (
+                -item[0],
+                str(item[1].get("section_number") or ""),
+            )
+        )
+        return [section for _, section in ranked]
+
+    def _outline_sections(self, evidence: RetrievalEvidence) -> list[dict[str, object]]:
+        content_type = evidence.metadata.get("content_type")
+        if content_type == "subpart_outline":
+            sections = evidence.metadata.get("sections")
+            return [item for item in sections if isinstance(item, dict)] if isinstance(sections, list) else []
+
+        if content_type == "part_outline":
+            sections: list[dict[str, object]] = []
+            direct_sections = evidence.metadata.get("direct_sections")
+            if isinstance(direct_sections, list):
+                sections.extend(item for item in direct_sections if isinstance(item, dict))
+            subparts = evidence.metadata.get("subparts")
+            if isinstance(subparts, list):
+                for subpart in subparts:
+                    if not isinstance(subpart, dict):
+                        continue
+                    subpart_sections = subpart.get("sections")
+                    if isinstance(subpart_sections, list):
+                        sections.extend(item for item in subpart_sections if isinstance(item, dict))
+            return sections
+
+        return []
