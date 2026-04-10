@@ -33,11 +33,10 @@ def _render_sources(sources: list[dict]) -> str:
     return "Sources:\n" + "\n".join(rendered)
 
 
-def ask_hipaa(question: str, history: list[list[str]], include_debug: bool) -> tuple[list[list[str]], str, str]:
-    history = history or []
+def ask_hipaa(question: str, include_debug: bool) -> tuple[str, str, str, str]:
     question = question.strip()
     if not question:
-        return history, "", "Введите вопрос"
+        return "", "", "", "Введите вопрос"
 
     try:
         response = requests.post(
@@ -50,37 +49,30 @@ def ask_hipaa(question: str, history: list[list[str]], include_debug: bool) -> t
         answer = data.get("answer", "")
         quotes = data.get("quotes", [])
         sources = data.get("sources", [])
-
-        extras: list[str] = []
-        if quotes:
-            extras.append(_render_quotes(quotes))
-        if sources:
-            extras.append(_render_sources(sources))
+        quotes_text = _render_quotes(quotes) if quotes else ""
+        sources_text = _render_sources(sources) if sources else ""
+        debug_text = ""
         if include_debug and data.get("debug"):
-            extras.append(f"Debug:\n```json\n{json.dumps(data['debug'], indent=2)}\n```")
-
-        rendered = answer
-        if extras:
-            rendered = f"{answer}\n\n" + "\n\n".join(extras)
-
-        history = history + [[question, rendered]]
-        return history, "", ""
+            debug_text = f"```json\n{json.dumps(data['debug'], indent=2)}\n```"
+        return answer, quotes_text, sources_text, debug_text
     except Exception as exc:
-        return history, question, f"Ошибка запроса: {exc}"
+        return "", "", "", f"Ошибка запроса: {exc}"
 
 
 with gr.Blocks() as demo:
     gr.Markdown("## HIPAA RAG")
-    gr.Markdown("Задавайте вопросы по HIPAA, а ответ вернется с цитатами и источниками.")
-    chatbot = gr.Chatbot(label="Диалог", height=500)
-    error_box = gr.Markdown()
+    gr.Markdown("Задавайте вопросы по HIPAA. Интерфейс показывает ответ, цитаты и источники без истории чата.")
     question_input = gr.Textbox(label="Вопрос", placeholder="Например: Does HIPAA mention encryption best practices?")
     debug_checkbox = gr.Checkbox(label="Показать debug retrieval", value=False)
+    answer_box = gr.Markdown(label="Ответ")
+    quotes_box = gr.Markdown(label="Цитаты")
+    sources_box = gr.Markdown(label="Источники")
+    debug_box = gr.Markdown(label="Debug")
     submit = gr.Button("Спросить")
     submit.click(
         ask_hipaa,
-        inputs=[question_input, chatbot, debug_checkbox],
-        outputs=[chatbot, question_input, error_box],
+        inputs=[question_input, debug_checkbox],
+        outputs=[answer_box, quotes_box, sources_box, debug_box],
     )
 
 
