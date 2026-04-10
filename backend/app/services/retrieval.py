@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, literal, select, text
+from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -109,7 +109,6 @@ class RetrievalService:
             .cte("fused_hits")
         )
 
-        await session.execute(text(f"SET LOCAL hnsw.ef_search = {int(self.settings.hnsw_ef_search)}"))
         rows = (
             await session.execute(
                 select(
@@ -148,7 +147,6 @@ class RetrievalService:
         query_embedding = await self.embedding_service.embed_query(query_text)
         distance = RetrievalChunk.embedding.cosine_distance(query_embedding)
         fetch_limit = limit * 5 if filters else limit
-        await session.execute(text(f"SET LOCAL hnsw.ef_search = {int(self.settings.hnsw_ef_search)}"))
         rows = (
             await session.execute(
                 select(RetrievalChunk, distance.label("distance"))

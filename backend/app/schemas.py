@@ -112,7 +112,7 @@ class HealthResponse(BaseModel):
 class IngestionSummary(BaseModel):
     retrieval_chunks: int
     lexical_index: Literal["pg_textsearch"]
-    dense_index: Literal["pgvector_hnsw"]
+    dense_index: Literal["pgvector_exact"]
     source_mode: Literal["markdown"]
 
 

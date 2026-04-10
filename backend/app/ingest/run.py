@@ -72,7 +72,7 @@ async def run_ingestion(
         summary = IngestionSummary(
             retrieval_chunks=len(chunks),
             lexical_index="pg_textsearch",
-            dense_index="pgvector_hnsw",
+            dense_index="pgvector_exact",
             source_mode="markdown",
         )
         await session.commit()

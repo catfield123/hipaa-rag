@@ -55,18 +55,7 @@ def upgrade() -> None:
         WITH (text_config = 'english')
         """
     )
-    op.execute(
-        """
-        CREATE INDEX retrieval_chunks_embedding_hnsw_idx
-        ON retrieval_chunks
-        USING hnsw (embedding vector_cosine_ops)
-        WITH (m = 16, ef_construction = 64)
-        """
-    )
-
-
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS retrieval_chunks_embedding_hnsw_idx")
     op.execute("DROP INDEX IF EXISTS retrieval_chunks_search_text_bm25_idx")
     op.drop_index("ix_retrieval_chunks_subpart", table_name="retrieval_chunks")
     op.drop_index("ix_retrieval_chunks_part", table_name="retrieval_chunks")
