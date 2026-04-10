@@ -53,17 +53,18 @@ def ask_hipaa(question: str) -> tuple[str, str, str]:
         return "", "", f"Ошибка запроса: {exc}"
 
 
-def _disable_submit():
-    return (
-        gr.update(interactive=False),
-        gr.update(visible=False),
-        gr.update(visible=False),
-    )
-
-
 def _run_query(question: str):
+    """First yield disables the button only; skip other outputs to avoid heavy Markdown re-renders while waiting."""
+    yield (
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.update(interactive=False),
+        gr.update(),
+        gr.update(),
+    )
     answer, quotes_text, sources_text = ask_hipaa(question)
-    return (
+    yield (
         answer,
         quotes_text,
         sources_text,
@@ -84,12 +85,10 @@ with gr.Blocks() as demo:
         sources_box = gr.Markdown()
     submit = gr.Button("Спросить")
     submit.click(
-        _disable_submit,
-        outputs=[submit, quotes_accordion, sources_accordion],
-    ).then(
         _run_query,
         inputs=[question_input],
         outputs=[answer_box, quotes_box, sources_box, submit, quotes_accordion, sources_accordion],
+        show_progress="hidden",
     )
 
 
