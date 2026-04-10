@@ -1,3 +1,5 @@
+"""Helpers for turning ORM rows into retrieval contracts and SQL filters."""
+
 from __future__ import annotations
 
 import re
@@ -5,16 +7,18 @@ import re
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import RetrievalChunk, StructuralContent
-from app.schemas import RetrievalEvidence, StructuralFilters
+from app.schemas import RetrievalEvidence, RetrievalMode, StructuralFilters
 
 
 def build_retrieval_evidence(
     chunk: RetrievalChunk,
     *,
-    retrieval_mode: str,
+    retrieval_mode: RetrievalMode,
     score: float,
     metadata_extra: dict[str, object] | None = None,
 ) -> RetrievalEvidence:
+    """Convert a retrieval chunk row into a normalized evidence object."""
+
     return RetrievalEvidence(
         chunk_id=chunk.id,
         path=[str(value) for value in chunk.path],
@@ -34,6 +38,8 @@ def build_retrieval_evidence(
 
 
 def build_structural_content_evidence(content: StructuralContent) -> RetrievalEvidence:
+    """Convert a structural content row into normalized evidence."""
+
     return RetrievalEvidence(
         chunk_id=-content.id,
         path=[str(value) for value in content.path],
@@ -56,6 +62,8 @@ def build_structural_content_evidence(content: StructuralContent) -> RetrievalEv
 
 
 def matches_structural_filters(chunk: RetrievalChunk, filters: StructuralFilters) -> bool:
+    """Check structural filters against a materialized retrieval chunk."""
+
     if filters.part_number and not _matches_label_number(chunk.part, "PART", filters.part_number):
         return False
 
@@ -79,6 +87,8 @@ def build_structural_filter_clauses(
     *,
     table: type[RetrievalChunk] = RetrievalChunk,
 ) -> list[ColumnElement[bool]]:
+    """Build SQLAlchemy filter clauses for retrieval chunk queries."""
+
     if filters is None:
         return []
 
@@ -103,6 +113,8 @@ def build_structural_content_filter_clauses(
     *,
     table: type[StructuralContent] = StructuralContent,
 ) -> list[ColumnElement[bool]]:
+    """Build SQLAlchemy filter clauses for structural content queries."""
+
     if filters is None:
         return []
 

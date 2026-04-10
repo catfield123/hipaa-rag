@@ -1,3 +1,5 @@
+"""PDF-to-markdown conversion helpers used by the ingestion pipeline."""
+
 from __future__ import annotations
 
 import re
@@ -18,6 +20,8 @@ The requirements of this subchapter implement sections 1171-1180 of the Social S
 
 
 class PdfToMarkdownConverter:
+    """Convert the source HIPAA PDF into normalized markdown for ingestion."""
+
     def __init__(self, converter: Any | None = None) -> None:
         self.converter = converter or self._build_converter()
 
@@ -30,6 +34,8 @@ class PdfToMarkdownConverter:
         start_line: str = "## § 160.102   Applicability.",
         prepend_text: str | None = None,
     ) -> str:
+        """Convert a PDF to markdown and optionally normalize it for chunking."""
+
         pdf_path = Path(pdf_path)
         result = self.converter.convert(str(pdf_path))
         markdown = result.document.export_to_markdown()
@@ -60,6 +66,8 @@ class PdfToMarkdownConverter:
         start_line: str = "## § 160.102   Applicability.",
         prepend_text: str | None = None,
     ) -> str:
+        """Normalize markdown so it is easier to chunk deterministically."""
+
         md_lines = markdown.splitlines()
 
         try:
@@ -106,6 +114,8 @@ class PdfToMarkdownConverter:
 
     @staticmethod
     def save_markdown(markdown: str, output_path: str | Path) -> Path:
+        """Write markdown to disk."""
+
         output_path = Path(output_path)
         output_path.write_text(markdown, encoding="utf-8")
         return output_path

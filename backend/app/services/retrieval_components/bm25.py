@@ -1,4 +1,8 @@
+"""Lexical BM25 retrieval backend."""
+
 from __future__ import annotations
+
+from typing import ClassVar
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +13,9 @@ from app.services.chunk_contract import build_retrieval_evidence, build_structur
 
 
 class BM25Service:
-    index_name = "retrieval_chunks_search_text_bm25_idx"
+    """Run lexical BM25 retrieval against indexed chunk text."""
+
+    index_name: ClassVar[str] = "retrieval_chunks_search_text_bm25_idx"
 
     async def search(
         self,
@@ -18,6 +24,8 @@ class BM25Service:
         limit: int,
         filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
+        """Return chunk evidence ranked by BM25 lexical relevance."""
+
         if not query_text.strip():
             return []
 

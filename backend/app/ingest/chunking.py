@@ -1,3 +1,5 @@
+"""Markdown chunking helpers used by the ingestion pipeline."""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +9,8 @@ from typing import Any
 
 
 class MarkdownChunker:
+    """Split normalized HIPAA markdown into retrieval chunks."""
+
     PART_RE = re.compile(r"^PART\s+(\d{3})(?:\s*[-\s]?\s*(.*))?$", re.IGNORECASE)
     SUBPART_RE = re.compile(r"^Subpart\s+([A-Z])(?:[-\s]+)(.*)")
     SECTION_RE = re.compile(r"^§\s*(\d+\.\d+)\b\s+([A-Z].*)")
@@ -15,6 +19,8 @@ class MarkdownChunker:
     FR_RE = re.compile(r"^\[\d{2,}\s+FR.*\]$")
 
     def chunk_markdown(self, src: str | list[str]) -> list[dict[str, Any]]:
+        """Chunk markdown text or lines into structured retrieval records."""
+
         lines = self._normalize_lines(src)
         chunks: list[dict[str, Any]] = []
 
@@ -136,6 +142,8 @@ class MarkdownChunker:
         *,
         output_path: str | Path | None = None,
     ) -> list[dict[str, Any]]:
+        """Load a markdown file, chunk it, and optionally persist the result."""
+
         markdown_path = Path(markdown_path)
         markdown = markdown_path.read_text(encoding="utf-8")
         chunks = self.chunk_markdown(markdown)
@@ -147,6 +155,8 @@ class MarkdownChunker:
 
     @staticmethod
     def save_chunks(chunks: list[dict[str, Any]], output_path: str | Path) -> Path:
+        """Persist chunks as pretty-printed JSON."""
+
         output_path = Path(output_path)
         output_path.write_text(
             json.dumps(chunks, ensure_ascii=False, indent=2),
