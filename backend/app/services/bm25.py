@@ -17,6 +17,7 @@ class BM25BuildResult:
     corpus_stat: dict[str, float | int]
     terms: list[dict[str, float | int | str]]
     postings: list[dict[str, int | str]]
+    chunk_lengths: dict[int, int]
 
 
 class BM25Service:
@@ -26,18 +27,22 @@ class BM25Service:
 
     def build(self, chunks: list[dict[str, object]]) -> BM25BuildResult:
         total_chunks = len(chunks)
-        lengths = [int(chunk["token_count"]) for chunk in chunks]
-        average_length = sum(lengths) / max(total_chunks, 1)
-
         document_frequency: Counter[str] = Counter()
         chunk_terms: dict[int, Counter[str]] = {}
+        chunk_lengths: dict[int, int] = {}
 
         for chunk in chunks:
             chunk_id = int(chunk["chunk_id"])
             terms = tokenize(str(chunk["content"]))
+            lexical_length = len(terms)
+            if lexical_length == 0:
+                continue
             counts = Counter(terms)
             chunk_terms[chunk_id] = counts
+            chunk_lengths[chunk_id] = lexical_length
             document_frequency.update(counts.keys())
+
+        average_length = sum(chunk_lengths.values()) / max(len(chunk_lengths), 1)
 
         terms_payload: list[dict[str, float | int | str]] = []
         postings_payload: list[dict[str, int | str]] = []
@@ -63,11 +68,12 @@ class BM25Service:
 
         return BM25BuildResult(
             corpus_stat={
-                "total_chunks": total_chunks,
+                "total_chunks": len(chunk_lengths),
                 "average_document_length": average_length,
             },
             terms=terms_payload,
             postings=postings_payload,
+            chunk_lengths=chunk_lengths,
         )
 
     async def search(
@@ -106,7 +112,7 @@ class BM25Service:
         chunk_map: dict[int, RetrievalChunk] = {}
         for posting, chunk in postings:
             chunk_map[chunk.id] = chunk
-            doc_len = max(chunk.token_count, 1)
+            doc_len = max(int(chunk.metadata_json.get("bm25_length", chunk.token_count)), 1)
             idf = idf_map.get(posting.term, 0.0)
             tf = posting.term_frequency
             numerator = tf * (self.k1 + 1)

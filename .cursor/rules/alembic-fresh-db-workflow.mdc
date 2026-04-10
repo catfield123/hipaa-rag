@@ -1,0 +1,12 @@
+---
+description: Keep Alembic migrations squashed for fresh DB workflow
+alwaysApply: true
+---
+
+# Fresh DB Migration Workflow
+
+- This project always recreates the database from scratch during development and ingestion setup.
+- Keep Alembic migrations squashed into the current initial state instead of creating follow-up migrations for schema tweaks.
+- When schema changes are needed, update `backend/alembic/versions/0001_initial.py` to match the current models and delete superseded follow-up migrations.
+- Do not add migration-history bookkeeping tables such as ingestion run history unless the user explicitly asks for persistent run tracking.
+- Keep the migration set minimal and aligned with the actual always-fresh database workflow.

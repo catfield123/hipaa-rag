@@ -1,6 +1,7 @@
 alembic
 asyncpg
 fastapi
+nltk
 openai
 pgvector
 psycopg[binary]

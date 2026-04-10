@@ -146,17 +146,3 @@ class BM25CorpusStat(Base):
         nullable=False,
         server_default=func.now(),
     )
-
-
-class IngestionRun(Base):
-    __tablename__ = "ingestion_runs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    source_path: Mapped[str] = mapped_column(String(1024), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-    summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-    )

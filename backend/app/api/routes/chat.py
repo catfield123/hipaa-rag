@@ -57,7 +57,7 @@ async def query_chat(payload: ChatQueryRequest, session: DbSessionDep) -> ChatQu
     quotes = []
     seen_node_ids: set[int] = set()
     for item in evidence[:3]:
-        node_id = int(item.metadata.get("start_node_id", 0))
+        node_id = int(item.metadata.get("quote_node_id", item.metadata.get("start_node_id", 0)))
         if not node_id or node_id in seen_node_ids:
             continue
         seen_node_ids.add(node_id)

@@ -8,7 +8,7 @@ from sqlalchemy import delete
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import BM25CorpusStat, BM25Posting, BM25Term, DocumentNode, IngestionRun, RetrievalChunk
+from app.models import BM25CorpusStat, BM25Posting, BM25Term, DocumentNode, RetrievalChunk
 from app.schemas import IngestionResult, IngestionSummary
 from app.services.bm25 import BM25Service, chunk_payloads_for_bm25
 from app.services.chunking import RetrievalChunker
@@ -32,14 +32,6 @@ async def run_ingestion() -> IngestionResult:
     embeddings = await embedding_service.embed_texts([chunk.content_with_context for chunk in chunks])
 
     async with SessionLocal() as session:
-        ingestion_run = IngestionRun(
-            source_path=str(pdf_path),
-            status="running",
-            summary={},
-        )
-        session.add(ingestion_run)
-        await session.flush()
-
         await session.execute(delete(BM25Posting))
         await session.execute(delete(BM25Term))
         await session.execute(delete(BM25CorpusStat))
@@ -67,6 +59,7 @@ async def run_ingestion() -> IngestionResult:
             node_id_map[node.key] = db_node.id
 
         chunk_payloads: list[dict[str, object]] = []
+        persisted_chunks: list[RetrievalChunk] = []
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             db_chunk = RetrievalChunk(
                 start_node_id=node_id_map[chunk.start_node_key],
@@ -84,6 +77,7 @@ async def run_ingestion() -> IngestionResult:
                     **chunk.metadata,
                     "start_node_id": node_id_map[chunk.start_node_key],
                     "end_node_id": node_id_map[chunk.end_node_key],
+                    "quote_node_id": node_id_map[chunk.quote_node_key],
                     "char_start": chunk.char_start,
                     "char_end": chunk.char_end,
                 },
@@ -91,6 +85,7 @@ async def run_ingestion() -> IngestionResult:
             )
             session.add(db_chunk)
             await session.flush()
+            persisted_chunks.append(db_chunk)
             chunk_payloads.append(
                 {
                     "chunk_id": db_chunk.id,
@@ -100,6 +95,14 @@ async def run_ingestion() -> IngestionResult:
             )
 
         bm25_build = bm25_service.build(chunk_payloads_for_bm25(chunk_payloads))
+        for db_chunk in persisted_chunks:
+            bm25_length = bm25_build.chunk_lengths.get(db_chunk.id)
+            if bm25_length is None:
+                continue
+            db_chunk.metadata_json = {
+                **db_chunk.metadata_json,
+                "bm25_length": bm25_length,
+            }
         session.add(
             BM25CorpusStat(
                 total_chunks=int(bm25_build.corpus_stat["total_chunks"]),
@@ -129,8 +132,6 @@ async def run_ingestion() -> IngestionResult:
             retrieval_chunks=len(chunks),
             bm25_terms=len(bm25_build.terms),
         )
-        ingestion_run.status = "completed"
-        ingestion_run.summary = summary.model_dump()
         await session.commit()
 
     return IngestionResult(status="completed", summary=summary)

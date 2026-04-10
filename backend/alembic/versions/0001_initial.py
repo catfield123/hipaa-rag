@@ -31,7 +31,7 @@ def upgrade() -> None:
         sa.Column("section_number", sa.String(length=32)),
         sa.Column("marker", sa.String(length=32)),
         sa.Column("source_label", sa.String(length=255), nullable=False),
-        sa.Column("heading", sa.String(length=512)),
+        sa.Column("heading", sa.Text()),
         sa.Column("raw_text", sa.Text(), nullable=False),
         sa.Column("page_start", sa.Integer(), nullable=False),
         sa.Column("page_end", sa.Integer(), nullable=False),
@@ -90,18 +90,9 @@ def upgrade() -> None:
         sa.Column("average_document_length", sa.Float(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
     )
-    op.create_table(
-        "ingestion_runs",
-        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("source_path", sa.String(length=1024), nullable=False),
-        sa.Column("status", sa.String(length=32), nullable=False),
-        sa.Column("summary", sa.JSON(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-    )
 
 
 def downgrade() -> None:
-    op.drop_table("ingestion_runs")
     op.drop_table("bm25_corpus_stats")
     op.drop_index("ix_bm25_postings_chunk_id", table_name="bm25_postings")
     op.drop_index("ix_bm25_postings_term", table_name="bm25_postings")
