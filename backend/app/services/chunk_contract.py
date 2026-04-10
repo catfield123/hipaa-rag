@@ -4,7 +4,7 @@ import re
 
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models import RetrievalChunk
+from app.models import RetrievalChunk, StructuralContent
 from app.schemas import RetrievalEvidence, StructuralFilters
 
 
@@ -29,6 +29,28 @@ def build_retrieval_evidence(
         metadata={
             **chunk.metadata_json,
             **(metadata_extra or {}),
+        },
+    )
+
+
+def build_structural_content_evidence(content: StructuralContent) -> RetrievalEvidence:
+    return RetrievalEvidence(
+        chunk_id=-content.id,
+        path=[str(value) for value in content.path],
+        path_text=content.path_text,
+        text=content.text,
+        section=content.section,
+        part=content.part,
+        subpart=content.subpart,
+        markers=[],
+        retrieval_mode="structure_lookup",
+        score=1.0,
+        metadata={
+            **content.metadata_json,
+            "content_type": content.content_type,
+            "part_number": content.part_number,
+            "subpart_key": content.subpart_key,
+            "section_number": content.section_number,
         },
     )
 
@@ -72,6 +94,27 @@ def build_structural_filter_clauses(
 
     if filters.marker_path:
         clauses.append(table.markers == [_format_marker(marker) for marker in filters.marker_path])
+
+    return clauses
+
+
+def build_structural_content_filter_clauses(
+    filters: StructuralFilters | None,
+    *,
+    table: type[StructuralContent] = StructuralContent,
+) -> list[ColumnElement[bool]]:
+    if filters is None:
+        return []
+
+    clauses: list[ColumnElement[bool]] = []
+    if filters.part_number:
+        clauses.append(table.part_number == filters.part_number)
+
+    if filters.section_number:
+        clauses.append(table.section_number == filters.section_number)
+
+    if filters.subpart:
+        clauses.append(table.subpart_key == filters.subpart.upper())
 
     return clauses
 

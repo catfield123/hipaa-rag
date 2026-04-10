@@ -4,16 +4,22 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+import re
 
 from sqlalchemy import delete, text
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import RetrievalChunk
+from app.models import RetrievalChunk, StructuralContent
 from app.schemas import IngestionResult, IngestionSummary
 from app.services.chunking import MarkdownChunker
 from app.services.embeddings import EmbeddingService
 from app.services.text_utils import estimate_token_count
+
+
+PART_LABEL_RE = re.compile(r"^PART\s+(\d+)\b(?:\s+(.*))?$")
+SUBPART_LABEL_RE = re.compile(r"^Subpart\s+([A-Z])(?:\s*-\s*(.*))?$", re.IGNORECASE)
+SECTION_LABEL_RE = re.compile(r"^§\s*(\d+\.\d+)\b(?:\s+(.*))?$")
 
 def _normalize_optional(value: object) -> str | None:
     if value is None:
@@ -30,6 +36,204 @@ def _load_markdown(markdown_path: str | None) -> tuple[str, str]:
     return source_path.read_text(encoding="utf-8"), str(source_path)
 
 
+def _parse_part_label(label: str | None) -> tuple[str | None, str | None]:
+    if not label:
+        return None, None
+    match = PART_LABEL_RE.match(label.strip())
+    if not match:
+        return None, None
+    return match.group(1), _normalize_optional(match.group(2))
+
+
+def _parse_subpart_label(label: str | None) -> tuple[str | None, str | None]:
+    if not label:
+        return None, None
+    match = SUBPART_LABEL_RE.match(label.strip())
+    if not match:
+        return None, None
+    return match.group(1).upper(), _normalize_optional(match.group(2))
+
+
+def _parse_section_label(label: str | None) -> tuple[str | None, str | None]:
+    if not label:
+        return None, None
+    match = SECTION_LABEL_RE.match(label.strip())
+    if not match:
+        return None, None
+    return match.group(1), _normalize_optional(match.group(2))
+
+
+def _join_outline_lines(lines: list[str]) -> str:
+    compact: list[str] = []
+    for line in lines:
+        normalized = line.rstrip()
+        if not normalized:
+            if compact and compact[-1]:
+                compact.append("")
+            continue
+        compact.append(normalized)
+    while compact and not compact[-1]:
+        compact.pop()
+    return "\n".join(compact)
+
+
+def _build_structural_content(
+    chunks: list[dict[str, object]],
+    *,
+    source_path: str,
+) -> list[StructuralContent]:
+    section_groups: dict[str, dict[str, object]] = {}
+    subpart_groups: dict[tuple[str | None, str], dict[str, object]] = {}
+    part_groups: dict[str, dict[str, object]] = {}
+
+    for chunk in chunks:
+        chunk_text = str(chunk["text"]).strip()
+        part_label = _normalize_optional(chunk.get("part"))
+        subpart_label = _normalize_optional(chunk.get("subpart"))
+        section_label = _normalize_optional(chunk.get("section"))
+        if not section_label:
+            continue
+
+        part_number, _ = _parse_part_label(part_label)
+        subpart_key, _ = _parse_subpart_label(subpart_label)
+        section_number, _ = _parse_section_label(section_label)
+
+        section_entry = section_groups.setdefault(
+            section_label,
+            {
+                "path": [label for label in [part_label, subpart_label, section_label] if label],
+                "part": part_label,
+                "subpart": subpart_label,
+                "section": section_label,
+                "part_number": part_number,
+                "subpart_key": subpart_key,
+                "section_number": section_number,
+                "texts": [],
+            },
+        )
+        section_entry["texts"].append(chunk_text)
+
+        if part_label:
+            part_entry = part_groups.setdefault(
+                part_label,
+                {
+                    "path": [part_label],
+                    "part": part_label,
+                    "part_number": part_number,
+                    "direct_sections": [],
+                    "subparts": {},
+                },
+            )
+            if subpart_label:
+                subpart_entry = part_entry["subparts"].setdefault(
+                    subpart_label,
+                    {
+                        "subpart": subpart_label,
+                        "subpart_key": subpart_key,
+                        "sections": [],
+                    },
+                )
+                if section_label not in subpart_entry["sections"]:
+                    subpart_entry["sections"].append(section_label)
+            elif section_label not in part_entry["direct_sections"]:
+                part_entry["direct_sections"].append(section_label)
+
+        if subpart_label:
+            subpart_entry = subpart_groups.setdefault(
+                (part_label, subpart_label),
+                {
+                    "path": [label for label in [part_label, subpart_label] if label],
+                    "part": part_label,
+                    "subpart": subpart_label,
+                    "part_number": part_number,
+                    "subpart_key": subpart_key,
+                    "sections": [],
+                },
+            )
+            if section_label not in subpart_entry["sections"]:
+                subpart_entry["sections"].append(section_label)
+
+    structural_items: list[StructuralContent] = []
+
+    for section_entry in section_groups.values():
+        structural_items.append(
+            StructuralContent(
+                content_type="section_text",
+                path=list(section_entry["path"]),
+                path_text=" > ".join(section_entry["path"]),
+                text=f'{section_entry["section"]}\n\n' + "\n\n".join(section_entry["texts"]),
+                part=section_entry["part"],
+                subpart=section_entry["subpart"],
+                section=section_entry["section"],
+                part_number=section_entry["part_number"],
+                subpart_key=section_entry["subpart_key"],
+                section_number=section_entry["section_number"],
+                metadata_json={
+                    "source_mode": "markdown",
+                    "source_path": source_path,
+                    "content_type": "section_text",
+                },
+            )
+        )
+
+    for subpart_entry in subpart_groups.values():
+        lines = [value for value in [subpart_entry["part"], subpart_entry["subpart"], ""] if value is not None]
+        lines.extend(str(section) for section in subpart_entry["sections"])
+        structural_items.append(
+            StructuralContent(
+                content_type="subpart_outline",
+                path=list(subpart_entry["path"]),
+                path_text=" > ".join(subpart_entry["path"]),
+                text=_join_outline_lines(lines),
+                part=subpart_entry["part"],
+                subpart=subpart_entry["subpart"],
+                section=None,
+                part_number=subpart_entry["part_number"],
+                subpart_key=subpart_entry["subpart_key"],
+                section_number=None,
+                metadata_json={
+                    "source_mode": "markdown",
+                    "source_path": source_path,
+                    "content_type": "subpart_outline",
+                },
+            )
+        )
+
+    for part_entry in part_groups.values():
+        lines = [str(part_entry["part"]), ""]
+        if part_entry["direct_sections"]:
+            lines.extend(["Sections with no Subpart"])
+            lines.extend(str(section) for section in part_entry["direct_sections"])
+            lines.append("")
+
+        for subpart_entry in part_entry["subparts"].values():
+            lines.append(str(subpart_entry["subpart"]))
+            lines.extend(str(section) for section in subpart_entry["sections"])
+            lines.append("")
+
+        structural_items.append(
+            StructuralContent(
+                content_type="part_outline",
+                path=list(part_entry["path"]),
+                path_text=" > ".join(part_entry["path"]),
+                text=_join_outline_lines(lines),
+                part=part_entry["part"],
+                subpart=None,
+                section=None,
+                part_number=part_entry["part_number"],
+                subpart_key=None,
+                section_number=None,
+                metadata_json={
+                    "source_mode": "markdown",
+                    "source_path": source_path,
+                    "content_type": "part_outline",
+                },
+            )
+        )
+
+    return structural_items
+
+
 async def run_ingestion(
     *,
     fake_embeddings: bool = False,
@@ -41,9 +245,11 @@ async def run_ingestion(
     embedding_service = EmbeddingService(use_fake_embeddings=fake_embeddings)
 
     chunks = chunker.chunk_markdown(markdown)
+    structural_content = _build_structural_content(chunks, source_path=source_path)
     embeddings = await embedding_service.embed_texts([str(chunk["text"]) for chunk in chunks]) if chunks else []
 
     async with SessionLocal() as session:
+        await session.execute(delete(StructuralContent))
         await session.execute(delete(RetrievalChunk))
 
         for chunk, embedding in zip(chunks, embeddings, strict=True):
@@ -65,6 +271,9 @@ async def run_ingestion(
                 embedding=embedding,
             )
             session.add(db_chunk)
+
+        for structural_item in structural_content:
+            session.add(structural_item)
 
         await session.flush()
         await session.execute(text("SELECT bm25_force_merge('retrieval_chunks_search_text_bm25_idx')"))

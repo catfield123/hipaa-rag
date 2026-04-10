@@ -35,9 +35,14 @@ class AnsweringService:
                     "min": 1,
                     "max": self.settings.query_rewrite_limit,
                 },
-                "allowed_modes": ["bm25_only", "hybrid"],
+                "allowed_modes": ["bm25_only", "hybrid", "structure_lookup"],
                 "bm25_is_required_for_literal_or_mention_queries": True,
                 "drop_corpus_obvious_terms_like_hipaa": True,
+                "structure_lookup_targets": [
+                    "section_text",
+                    "part_outline",
+                    "subpart_outline",
+                ],
                 "optional_structural_filters": {
                     "part_number": "string | null",
                     "section_number": "string | null",
@@ -55,6 +60,8 @@ class AnsweringService:
                     "Rewrite the user query into retrieval queries. "
                     "Choose bm25_only for literal or mention checks. "
                     "Choose hybrid for semantic or multi-section questions. "
+                    "Choose structure_lookup when the user wants the full text of a specific section, "
+                    "a list of sections within a subpart, or a part outline with subparts and sections. "
                     "If the user asks about a specific part/section/subpart/paragraph, "
                     "add filters to narrow retrieval."
                 ),
@@ -84,6 +91,14 @@ class AnsweringService:
         attempted_queries: list[QueryVariant],
         retrieval_round: int,
     ) -> EvidenceDecision:
+        if intent == "structure_lookup" and any(
+            item.retrieval_mode == "structure_lookup" for item in evidence
+        ):
+            return EvidenceDecision(
+                sufficient=True,
+                rationale="Direct structural content was found for the request.",
+            )
+
         fallback = self._fallback_evidence_decision(intent=intent, evidence=evidence)
         attempted_queries = self._sanitize_query_variants(attempted_queries)
         if not self.settings.openai_api_key:
@@ -104,6 +119,12 @@ class AnsweringService:
                 "avoid_repeating_or_lightly_rephrasing_attempted_queries": True,
                 "choose_bm25_only_for_literal_quote_or_exact_mention_checks": True,
                 "choose_hybrid_for_semantic_follow_up": True,
+                "choose_structure_lookup_for_direct_section_or_outline_requests": True,
+                "structure_lookup_targets": [
+                    "section_text",
+                    "part_outline",
+                    "subpart_outline",
+                ],
                 "optional_structural_filters": {
                     "part_number": "string | null",
                     "section_number": "string | null",
@@ -118,7 +139,8 @@ class AnsweringService:
                 "next_queries": [
                     {
                         "text": "string",
-                        "mode": "bm25_only | hybrid",
+                        "mode": "bm25_only | hybrid | structure_lookup",
+                        "structure_target": "section_text | part_outline | subpart_outline | null",
                         "strategy": "string",
                         "reason": "string",
                         "filters": {
@@ -138,7 +160,8 @@ class AnsweringService:
                     "You are a legal retrieval judge for HIPAA question answering. "
                     "Return JSON only. Decide whether the currently retrieved evidence is enough to answer "
                     "the user's question. If yes, set sufficient=true and next_queries=[]. "
-                    "If no, explain what is missing and propose the next retrieval queries."
+                    "If no, explain what is missing and propose the next retrieval queries. "
+                    "Use structure_lookup when the missing information is a full section text or an outline."
                 ),
             },
             {
@@ -166,6 +189,9 @@ class AnsweringService:
     ) -> str:
         if not evidence:
             return "I could not find enough support in the provided HIPAA text to answer confidently."
+
+        if intent == "structure_lookup":
+            return self._render_structural_content(evidence)
 
         if not self.settings.openai_api_key:
             return self._fallback_answer(question, intent, evidence)
@@ -223,6 +249,51 @@ class AnsweringService:
         inferred_filters = self._infer_structural_filters(user_query)
 
         lowered = user_query.lower()
+        if self._is_section_text_request(lowered, inferred_filters):
+            return QueryPlan(
+                intent="structure_lookup",
+                queries=[
+                    QueryVariant(
+                        text=exact_query,
+                        mode="structure_lookup",
+                        structure_target="section_text",
+                        strategy="section_text_lookup",
+                        reason="Return the full precomputed text for the cited section.",
+                        filters=inferred_filters,
+                    )
+                ],
+            )
+
+        if self._is_part_outline_request(lowered, inferred_filters):
+            return QueryPlan(
+                intent="structure_lookup",
+                queries=[
+                    QueryVariant(
+                        text=exact_query,
+                        mode="structure_lookup",
+                        structure_target="part_outline",
+                        strategy="part_outline_lookup",
+                        reason="Return the part outline with subparts and sections.",
+                        filters=inferred_filters,
+                    )
+                ],
+            )
+
+        if self._is_subpart_outline_request(lowered, inferred_filters):
+            return QueryPlan(
+                intent="structure_lookup",
+                queries=[
+                    QueryVariant(
+                        text=exact_query,
+                        mode="structure_lookup",
+                        structure_target="subpart_outline",
+                        strategy="subpart_outline_lookup",
+                        reason="Return the subpart outline with all section headings.",
+                        filters=inferred_filters,
+                    )
+                ],
+            )
+
         if any(word in lowered for word in ("does", "mention", "is there", "does hipaa")):
             intent = "existence_check"
             queries = [
@@ -320,6 +391,9 @@ class AnsweringService:
         intent: str,
         evidence: list[RetrievalEvidence],
     ) -> str:
+        if intent == "structure_lookup":
+            return self._render_structural_content(evidence)
+
         if intent == "existence_check":
             if evidence:
                 sources = ", ".join(item.path_text for item in evidence[:3])
@@ -376,6 +450,17 @@ class AnsweringService:
                 missing_information=missing_information,
             )
 
+        if intent == "structure_lookup":
+            return EvidenceDecision(
+                sufficient=bool(evidence),
+                rationale=(
+                    "Direct structural content was found."
+                    if evidence
+                    else "Need a direct section or outline lookup result."
+                ),
+                missing_information=[] if evidence else ["Need the requested structural content."],
+            )
+
         sufficient = len(evidence) >= 3
         return EvidenceDecision(
             sufficient=sufficient,
@@ -403,12 +488,15 @@ class AnsweringService:
             text = re.sub(r"\s+", " ", query.text).strip()
             if not text:
                 continue
+            if query.mode == "structure_lookup" and query.structure_target is None:
+                continue
 
             filters_payload = query.filters.model_dump() if query.filters else None
             signature = json.dumps(
                 {
                     "text": text.lower(),
                     "mode": query.mode,
+                    "structure_target": query.structure_target,
                     "filters": filters_payload,
                 },
                 sort_keys=True,
@@ -421,3 +509,53 @@ class AnsweringService:
             if len(sanitized) >= self.settings.query_rewrite_limit:
                 break
         return sanitized
+
+    def _render_structural_content(self, evidence: list[RetrievalEvidence]) -> str:
+        structural_texts = [
+            item.text.strip()
+            for item in evidence
+            if item.retrieval_mode == "structure_lookup" and item.text.strip()
+        ]
+        if structural_texts:
+            return "\n\n".join(unique_preserve_order(structural_texts))
+        return self._fallback_answer("", "general", evidence)
+
+    def _is_section_text_request(
+        self,
+        lowered_query: str,
+        inferred_filters: StructuralFilters | None,
+    ) -> bool:
+        if not inferred_filters or not inferred_filters.section_number:
+            return False
+        phrases = (
+            "full text",
+            "entire section",
+            "whole section",
+            "text of",
+            "show me",
+            "show ",
+            "give me",
+            "provide",
+            "quote",
+        )
+        return any(phrase in lowered_query for phrase in phrases)
+
+    def _is_part_outline_request(
+        self,
+        lowered_query: str,
+        inferred_filters: StructuralFilters | None,
+    ) -> bool:
+        if not inferred_filters or not inferred_filters.part_number:
+            return False
+        keywords = ("contents", "outline", "list", "subpart", "sections", "section headings")
+        return any(keyword in lowered_query for keyword in keywords)
+
+    def _is_subpart_outline_request(
+        self,
+        lowered_query: str,
+        inferred_filters: StructuralFilters | None,
+    ) -> bool:
+        if not inferred_filters or not inferred_filters.subpart:
+            return False
+        keywords = ("contents", "outline", "list", "sections", "section headings")
+        return any(keyword in lowered_query for keyword in keywords)

@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db_session
@@ -64,6 +64,27 @@ async def search_hybrid(payload: SearchRequest, session: DbSessionDep) -> Search
     )
     return SearchResponse(
         mode="hybrid",
+        query_text=payload.query_text,
+        limit=payload.limit,
+        filters=payload.filters,
+        results=results,
+    )
+
+
+@router.post("/admin/search/structure")
+async def search_structure(payload: SearchRequest, session: DbSessionDep) -> SearchResponse:
+    if payload.structure_target is None:
+        raise HTTPException(status_code=400, detail="structure_target is required for structure lookup.")
+
+    service = RetrievalService()
+    results = await service.lookup_structural_content(
+        session=session,
+        target=payload.structure_target,
+        limit=payload.limit,
+        filters=payload.filters,
+    )
+    return SearchResponse(
+        mode="structure_lookup",
         query_text=payload.query_text,
         limit=payload.limit,
         filters=payload.filters,

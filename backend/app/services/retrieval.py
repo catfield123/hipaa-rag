@@ -4,10 +4,15 @@ from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import RetrievalChunk
-from app.schemas import QueryPlan, RetrievalEvidence, StructuralFilters
+from app.models import RetrievalChunk, StructuralContent
+from app.schemas import QueryPlan, RetrievalEvidence, StructuralContentTarget, StructuralFilters
 from app.services.bm25 import BM25Service
-from app.services.chunk_contract import build_retrieval_evidence, build_structural_filter_clauses
+from app.services.chunk_contract import (
+    build_retrieval_evidence,
+    build_structural_content_evidence,
+    build_structural_content_filter_clauses,
+    build_structural_filter_clauses,
+)
 from app.services.embeddings import EmbeddingService
 from app.services.text_utils import unique_preserve_order
 
@@ -25,7 +30,14 @@ class RetrievalService:
     ) -> list[RetrievalEvidence]:
         evidence_sets: list[list[RetrievalEvidence]] = []
         for variant in plan.queries:
-            if variant.mode == "bm25_only":
+            if variant.mode == "structure_lookup" and variant.structure_target:
+                evidence = await self.lookup_structural_content(
+                    session=session,
+                    target=variant.structure_target,
+                    limit=self.settings.retrieval_limit,
+                    filters=variant.filters,
+                )
+            elif variant.mode == "bm25_only":
                 evidence = await self.bm25_service.search(
                     session=session,
                     query_text=variant.text,
@@ -42,6 +54,26 @@ class RetrievalService:
             evidence_sets.append(evidence)
 
         return self._merge_evidence_sets(evidence_sets, limit=self.settings.retrieval_limit)
+
+    async def lookup_structural_content(
+        self,
+        session: AsyncSession,
+        target: StructuralContentTarget,
+        limit: int,
+        filters: StructuralFilters | None = None,
+    ) -> list[RetrievalEvidence]:
+        rows = (
+            await session.execute(
+                select(StructuralContent)
+                .where(
+                    StructuralContent.content_type == target,
+                    *build_structural_content_filter_clauses(filters),
+                )
+                .order_by(StructuralContent.id)
+                .limit(limit)
+            )
+        ).scalars().all()
+        return [build_structural_content_evidence(item) for item in rows]
 
     async def hybrid_search(
         self,

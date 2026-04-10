@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+StructuralContentTarget = Literal["section_text", "part_outline", "subpart_outline"]
+
 
 class StructuralFilters(BaseModel):
     part_number: str | None = None
@@ -14,10 +16,11 @@ class StructuralFilters(BaseModel):
 
 class QueryVariant(BaseModel):
     text: str = Field(min_length=1)
-    mode: Literal["bm25_only", "hybrid"]
+    mode: Literal["bm25_only", "hybrid", "structure_lookup"]
     strategy: str
     reason: str
     filters: StructuralFilters | None = None
+    structure_target: StructuralContentTarget | None = None
 
 
 class AnswerConstraints(BaseModel):
@@ -32,6 +35,7 @@ class QueryPlan(BaseModel):
         "existence_check",
         "list_references",
         "ambiguous",
+        "structure_lookup",
     ]
     queries: list[QueryVariant]
     answer_constraints: AnswerConstraints = Field(default_factory=AnswerConstraints)
@@ -46,7 +50,7 @@ class RetrievalEvidence(BaseModel):
     part: str | None = None
     subpart: str | None = None
     markers: list[str] = Field(default_factory=list)
-    retrieval_mode: Literal["bm25_only", "dense", "hybrid"]
+    retrieval_mode: Literal["bm25_only", "dense", "hybrid", "structure_lookup"]
     score: float
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -96,10 +100,11 @@ class SearchRequest(BaseModel):
     query_text: str = Field(min_length=1)
     limit: int = Field(default=10, ge=1, le=100)
     filters: StructuralFilters | None = None
+    structure_target: StructuralContentTarget | None = None
 
 
 class SearchResponse(BaseModel):
-    mode: Literal["bm25_only", "dense", "hybrid"]
+    mode: Literal["bm25_only", "dense", "hybrid", "structure_lookup"]
     query_text: str
     limit: int
     filters: StructuralFilters | None = None

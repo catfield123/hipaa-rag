@@ -44,3 +44,24 @@ class RetrievalChunk(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class StructuralContent(Base):
+    __tablename__ = "structural_content"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    content_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    path: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    path_text: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    part: Mapped[str | None] = mapped_column(String(255), index=True)
+    subpart: Mapped[str | None] = mapped_column(String(255), index=True)
+    section: Mapped[str | None] = mapped_column(String(255), index=True)
+    part_number: Mapped[str | None] = mapped_column(String(32), index=True)
+    subpart_key: Mapped[str | None] = mapped_column(String(32), index=True)
+    section_number: Mapped[str | None] = mapped_column(String(32), index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )

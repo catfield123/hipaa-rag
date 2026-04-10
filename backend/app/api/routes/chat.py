@@ -175,11 +175,14 @@ def _filter_unseen_queries(
     return filtered
 
 
-def _query_signature(query: QueryVariant) -> tuple[str, str, str | None, str | None, str | None, tuple[str, ...]]:
+def _query_signature(
+    query: QueryVariant,
+) -> tuple[str, str, str | None, str | None, str | None, str | None, tuple[str, ...]]:
     filters = query.filters
     return (
         " ".join(query.text.lower().split()),
         query.mode,
+        query.structure_target,
         filters.part_number if filters else None,
         filters.section_number if filters else None,
         filters.subpart if filters else None,
