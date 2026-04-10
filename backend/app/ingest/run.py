@@ -5,13 +5,12 @@ import asyncio
 import json
 from pathlib import Path
 
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import BM25CorpusStat, BM25Posting, BM25Term, RetrievalChunk
+from app.models import RetrievalChunk
 from app.schemas import IngestionResult, IngestionSummary
-from app.services.bm25 import BM25Service, chunk_payloads_for_bm25
 from app.services.chunking import MarkdownChunker
 from app.services.embeddings import EmbeddingService
 from app.services.text_utils import estimate_token_count
@@ -40,19 +39,13 @@ async def run_ingestion(
 
     chunker = MarkdownChunker()
     embedding_service = EmbeddingService(use_fake_embeddings=fake_embeddings)
-    bm25_service = BM25Service()
 
     chunks = chunker.chunk_markdown(markdown)
     embeddings = await embedding_service.embed_texts([str(chunk["text"]) for chunk in chunks]) if chunks else []
 
     async with SessionLocal() as session:
-        await session.execute(delete(BM25Posting))
-        await session.execute(delete(BM25CorpusStat))
-        await session.execute(delete(BM25Term))
         await session.execute(delete(RetrievalChunk))
 
-        chunk_payloads: list[dict[str, object]] = []
-        persisted_chunks: list[RetrievalChunk] = []
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             text = str(chunk["text"]).strip()
             db_chunk = RetrievalChunk(
@@ -72,52 +65,14 @@ async def run_ingestion(
                 embedding=embedding,
             )
             session.add(db_chunk)
-            persisted_chunks.append(db_chunk)
-            chunk_payloads.append(
-                {
-                    "chunk_id": db_chunk.id,
-                    "content": db_chunk.text,
-                    "token_count": db_chunk.token_count,
-                }
-            )
 
         await session.flush()
-        bm25_build = bm25_service.build(chunk_payloads_for_bm25(chunk_payloads))
-        for db_chunk in persisted_chunks:
-            bm25_length = bm25_build.chunk_lengths.get(db_chunk.id)
-            if bm25_length is None:
-                continue
-            db_chunk.metadata_json = {
-                **db_chunk.metadata_json,
-                "bm25_length": bm25_length,
-            }
-        session.add(
-            BM25CorpusStat(
-                total_chunks=int(bm25_build.corpus_stat["total_chunks"]),
-                average_document_length=float(bm25_build.corpus_stat["average_document_length"]),
-            )
-        )
-        session.add_all(
-            BM25Term(
-                term=item["term"],
-                document_frequency=int(item["document_frequency"]),
-                inverse_document_frequency=float(item["inverse_document_frequency"]),
-            )
-            for item in bm25_build.terms
-        )
-        await session.flush()
-        session.add_all(
-            BM25Posting(
-                term=str(item["term"]),
-                chunk_id=int(item["chunk_id"]),
-                term_frequency=int(item["term_frequency"]),
-            )
-            for item in bm25_build.postings
-        )
+        await session.execute(text("SELECT bm25_force_merge('retrieval_chunks_search_text_bm25_idx')"))
 
         summary = IngestionSummary(
             retrieval_chunks=len(chunks),
-            bm25_terms=len(bm25_build.terms),
+            lexical_index="pg_textsearch",
+            dense_index="pgvector_hnsw",
             source_mode="markdown",
         )
         await session.commit()

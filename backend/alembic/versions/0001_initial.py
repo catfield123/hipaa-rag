@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from alembic import op
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "0001_initial"
@@ -25,53 +26,48 @@ def upgrade() -> None:
     op.create_table(
         "retrieval_chunks",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=False),
-        sa.Column("path", sa.JSON(), nullable=False),
+        sa.Column("path", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("path_text", sa.Text(), nullable=False),
         sa.Column("text", sa.Text(), nullable=False),
+        sa.Column(
+            "search_text",
+            sa.Text(),
+            sa.Computed("coalesce(path_text, '') || E'\\n' || coalesce(text, '')", persisted=True),
+            nullable=False,
+        ),
         sa.Column("section", sa.String(length=255)),
         sa.Column("part", sa.String(length=255)),
         sa.Column("subpart", sa.String(length=255)),
-        sa.Column("markers", sa.JSON(), nullable=False),
+        sa.Column("markers", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=False),
-        sa.Column("metadata_json", sa.JSON(), nullable=False),
+        sa.Column("metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("embedding", Vector(1536)),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
     )
     op.create_index("ix_retrieval_chunks_section", "retrieval_chunks", ["section"])
     op.create_index("ix_retrieval_chunks_part", "retrieval_chunks", ["part"])
     op.create_index("ix_retrieval_chunks_subpart", "retrieval_chunks", ["subpart"])
-    op.create_table(
-        "bm25_terms",
-        sa.Column("term", sa.String(length=128), primary_key=True),
-        sa.Column("document_frequency", sa.Integer(), nullable=False),
-        sa.Column("inverse_document_frequency", sa.Float(), nullable=False),
+    op.execute(
+        """
+        CREATE INDEX retrieval_chunks_search_text_bm25_idx
+        ON retrieval_chunks
+        USING bm25 (search_text)
+        WITH (text_config = 'english')
+        """
     )
-    op.create_table(
-        "bm25_postings",
-        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("term", sa.String(length=128), sa.ForeignKey("bm25_terms.term", ondelete="CASCADE"), nullable=False),
-        sa.Column("chunk_id", sa.Integer(), sa.ForeignKey("retrieval_chunks.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("term_frequency", sa.Integer(), nullable=False),
-        sa.UniqueConstraint("term", "chunk_id", name="uq_bm25_term_chunk"),
-    )
-    op.create_index("ix_bm25_postings_term", "bm25_postings", ["term"])
-    op.create_index("ix_bm25_postings_chunk_id", "bm25_postings", ["chunk_id"])
-
-    op.create_table(
-        "bm25_corpus_stats",
-        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("total_chunks", sa.Integer(), nullable=False),
-        sa.Column("average_document_length", sa.Float(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+    op.execute(
+        """
+        CREATE INDEX retrieval_chunks_embedding_hnsw_idx
+        ON retrieval_chunks
+        USING hnsw (embedding vector_cosine_ops)
+        WITH (m = 16, ef_construction = 64)
+        """
     )
 
 
 def downgrade() -> None:
-    op.drop_table("bm25_corpus_stats")
-    op.drop_index("ix_bm25_postings_chunk_id", table_name="bm25_postings")
-    op.drop_index("ix_bm25_postings_term", table_name="bm25_postings")
-    op.drop_table("bm25_postings")
-    op.drop_table("bm25_terms")
+    op.execute("DROP INDEX IF EXISTS retrieval_chunks_embedding_hnsw_idx")
+    op.execute("DROP INDEX IF EXISTS retrieval_chunks_search_text_bm25_idx")
     op.drop_index("ix_retrieval_chunks_subpart", table_name="retrieval_chunks")
     op.drop_index("ix_retrieval_chunks_part", table_name="retrieval_chunks")
     op.drop_index("ix_retrieval_chunks_section", table_name="retrieval_chunks")

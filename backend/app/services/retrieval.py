@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from collections import defaultdict
-
-from sqlalchemy import select
+from sqlalchemy import func, literal, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models import RetrievalChunk
 from app.schemas import QueryPlan, RetrievalEvidence, StructuralFilters
 from app.services.bm25 import BM25Service
-from app.services.chunk_contract import build_retrieval_evidence, matches_structural_filters
+from app.services.chunk_contract import build_retrieval_evidence, build_structural_filter_clauses
 from app.services.embeddings import EmbeddingService
 from app.services.text_utils import unique_preserve_order
 
@@ -52,21 +50,93 @@ class RetrievalService:
         limit: int,
         filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
-        bm25_hits = await self.bm25_service.search(
-            session=session,
-            query_text=query_text,
-            limit=self.settings.bm25_limit,
-            filters=filters,
-        )
         if not self.settings.openai_api_key:
-            return bm25_hits[:limit]
-        dense_hits = await self.dense_search(
-            session=session,
-            query_text=query_text,
-            limit=self.settings.dense_limit,
-            filters=filters,
+            return await self.bm25_service.search(
+                session=session,
+                query_text=query_text,
+                limit=limit,
+                filters=filters,
+            )
+
+        query_embedding = await self.embedding_service.embed_query(query_text)
+        filter_clauses = build_structural_filter_clauses(filters)
+        bm25_query = func.to_bm25query(query_text, self.bm25_service.index_name)
+        bm25_order_expr = RetrievalChunk.search_text.op("<@>")(bm25_query)
+        dense_distance = RetrievalChunk.embedding.cosine_distance(query_embedding)
+
+        bm25_hits = (
+            select(
+                RetrievalChunk.id.label("chunk_id"),
+                func.row_number().over(order_by=bm25_order_expr).label("bm25_rank"),
+                (-bm25_order_expr).label("bm25_score"),
+            )
+            .where(*filter_clauses)
+            .order_by(bm25_order_expr)
+            .limit(self.settings.bm25_limit)
+            .cte("bm25_hits")
         )
-        return self._rrf_fuse([bm25_hits, dense_hits], limit=limit)
+
+        dense_hits = (
+            select(
+                RetrievalChunk.id.label("chunk_id"),
+                func.row_number().over(order_by=dense_distance).label("dense_rank"),
+                (literal(1.0) - dense_distance).label("dense_score"),
+            )
+            .where(RetrievalChunk.embedding.is_not(None), *filter_clauses)
+            .order_by(dense_distance)
+            .limit(self.settings.dense_limit)
+            .cte("dense_hits")
+        )
+
+        rrf_k = float(self.settings.hybrid_rrf_k)
+        fused = (
+            select(
+                func.coalesce(bm25_hits.c.chunk_id, dense_hits.c.chunk_id).label("chunk_id"),
+                (
+                    func.coalesce(literal(1.0) / (literal(rrf_k) + bm25_hits.c.bm25_rank), literal(0.0))
+                    + func.coalesce(literal(1.0) / (literal(rrf_k) + dense_hits.c.dense_rank), literal(0.0))
+                ).label("hybrid_score"),
+                bm25_hits.c.bm25_score.label("bm25_score"),
+                dense_hits.c.dense_score.label("dense_score"),
+            )
+            .select_from(
+                bm25_hits.join(
+                    dense_hits,
+                    bm25_hits.c.chunk_id == dense_hits.c.chunk_id,
+                    full=True,
+                )
+            )
+            .cte("fused_hits")
+        )
+
+        await session.execute(text(f"SET LOCAL hnsw.ef_search = {int(self.settings.hnsw_ef_search)}"))
+        rows = (
+            await session.execute(
+                select(
+                    RetrievalChunk,
+                    fused.c.hybrid_score,
+                    fused.c.bm25_score,
+                    fused.c.dense_score,
+                )
+                .join(fused, fused.c.chunk_id == RetrievalChunk.id)
+                .order_by(fused.c.hybrid_score.desc())
+                .limit(limit)
+            )
+        ).all()
+
+        return [
+            build_retrieval_evidence(
+                chunk,
+                retrieval_mode="hybrid",
+                score=float(hybrid_score),
+                metadata_extra={
+                    "hybrid_score": float(hybrid_score),
+                    "bm25_score": float(bm25_score) if bm25_score is not None else None,
+                    "dense_score": float(dense_score) if dense_score is not None else None,
+                },
+            )
+            for chunk, hybrid_score, bm25_score, dense_score in rows
+        ]
 
     async def dense_search(
         self,
@@ -77,51 +147,26 @@ class RetrievalService:
     ) -> list[RetrievalEvidence]:
         query_embedding = await self.embedding_service.embed_query(query_text)
         distance = RetrievalChunk.embedding.cosine_distance(query_embedding)
-        fetch_limit = limit * 10 if filters else limit
+        fetch_limit = limit * 5 if filters else limit
+        await session.execute(text(f"SET LOCAL hnsw.ef_search = {int(self.settings.hnsw_ef_search)}"))
         rows = (
             await session.execute(
                 select(RetrievalChunk, distance.label("distance"))
-                .where(RetrievalChunk.embedding.is_not(None))
+                .where(RetrievalChunk.embedding.is_not(None), *build_structural_filter_clauses(filters))
                 .order_by(distance)
                 .limit(fetch_limit)
             )
         ).all()
 
-        evidence: list[RetrievalEvidence] = []
-        for chunk, distance_value in rows:
-            if filters and not matches_structural_filters(chunk, filters):
-                continue
-            evidence.append(
-                build_retrieval_evidence(
-                    chunk,
-                    retrieval_mode="dense",
-                    score=max(0.0, 1.0 - float(distance_value)),
-                )
+        return [
+            build_retrieval_evidence(
+                chunk,
+                retrieval_mode="dense",
+                score=max(0.0, 1.0 - float(distance_value)),
+                metadata_extra={"dense_score": max(0.0, 1.0 - float(distance_value))},
             )
-            if len(evidence) >= limit:
-                break
-        return evidence
-
-    def _rrf_fuse(
-        self,
-        result_sets: list[list[RetrievalEvidence]],
-        limit: int,
-        k: int = 60,
-    ) -> list[RetrievalEvidence]:
-        scores: dict[int, float] = defaultdict(float)
-        evidence_by_chunk_id: dict[int, RetrievalEvidence] = {}
-
-        for result_set in result_sets:
-            for rank, evidence in enumerate(result_set, start=1):
-                scores[evidence.chunk_id] += 1.0 / (k + rank)
-                evidence_by_chunk_id[evidence.chunk_id] = evidence
-
-        ranked_chunk_ids = sorted(scores, key=scores.get, reverse=True)[:limit]
-        fused: list[RetrievalEvidence] = []
-        for chunk_id in ranked_chunk_ids:
-            base = evidence_by_chunk_id[chunk_id]
-            fused.append(base.model_copy(update={"score": scores[chunk_id], "retrieval_mode": "hybrid"}))
-        return fused
+            for chunk, distance_value in rows[:limit]
+        ]
 
     def _merge_evidence_sets(
         self,

@@ -1,81 +1,15 @@
 from __future__ import annotations
 
-import math
-from collections import Counter, defaultdict
-from dataclasses import dataclass
-
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import BM25CorpusStat, BM25Posting, BM25Term, RetrievalChunk
+from app.models import RetrievalChunk
 from app.schemas import RetrievalEvidence, StructuralFilters
-from app.services.chunk_contract import build_retrieval_evidence, matches_structural_filters
-from app.services.text_utils import estimate_token_count, tokenize
-
-
-@dataclass
-class BM25BuildResult:
-    corpus_stat: dict[str, float | int]
-    terms: list[dict[str, float | int | str]]
-    postings: list[dict[str, int | str]]
-    chunk_lengths: dict[int, int]
+from app.services.chunk_contract import build_retrieval_evidence, build_structural_filter_clauses
 
 
 class BM25Service:
-    def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
-        self.k1 = k1
-        self.b = b
-
-    def build(self, chunks: list[dict[str, object]]) -> BM25BuildResult:
-        total_chunks = len(chunks)
-        document_frequency: Counter[str] = Counter()
-        chunk_terms: dict[int, Counter[str]] = {}
-        chunk_lengths: dict[int, int] = {}
-
-        for chunk in chunks:
-            chunk_id = int(chunk["chunk_id"])
-            terms = tokenize(str(chunk["content"]))
-            lexical_length = len(terms)
-            if lexical_length == 0:
-                continue
-            counts = Counter(terms)
-            chunk_terms[chunk_id] = counts
-            chunk_lengths[chunk_id] = lexical_length
-            document_frequency.update(counts.keys())
-
-        average_length = sum(chunk_lengths.values()) / max(len(chunk_lengths), 1)
-
-        terms_payload: list[dict[str, float | int | str]] = []
-        postings_payload: list[dict[str, int | str]] = []
-        for term, df in document_frequency.items():
-            idf = math.log((total_chunks - df + 0.5) / (df + 0.5) + 1)
-            terms_payload.append(
-                {
-                    "term": term,
-                    "document_frequency": df,
-                    "inverse_document_frequency": idf,
-                }
-            )
-
-        for chunk_id, counts in chunk_terms.items():
-            for term, frequency in counts.items():
-                postings_payload.append(
-                    {
-                        "term": term,
-                        "chunk_id": chunk_id,
-                        "term_frequency": frequency,
-                    }
-                )
-
-        return BM25BuildResult(
-            corpus_stat={
-                "total_chunks": len(chunk_lengths),
-                "average_document_length": average_length,
-            },
-            terms=terms_payload,
-            postings=postings_payload,
-            chunk_lengths=chunk_lengths,
-        )
+    index_name = "retrieval_chunks_search_text_bm25_idx"
 
     async def search(
         self,
@@ -84,66 +18,26 @@ class BM25Service:
         limit: int,
         filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
-        query_terms = tokenize(query_text)
-        if not query_terms:
+        if not query_text.strip():
             return []
 
-        corpus_stat = await session.scalar(
-            select(BM25CorpusStat).order_by(BM25CorpusStat.id.desc()).limit(1)
-        )
-        if corpus_stat is None:
-            return []
-
-        term_rows = (
-            await session.execute(select(BM25Term).where(BM25Term.term.in_(query_terms)))
-        ).scalars().all()
-        if not term_rows:
-            return []
-
-        idf_map = {row.term: row.inverse_document_frequency for row in term_rows}
+        bm25_query = func.to_bm25query(query_text, self.index_name)
+        raw_score = RetrievalChunk.search_text.op("<@>")(bm25_query)
+        fetch_limit = limit * 5 if filters else limit
 
         query = (
-            select(BM25Posting, RetrievalChunk)
-            .join(RetrievalChunk, RetrievalChunk.id == BM25Posting.chunk_id)
-            .where(BM25Posting.term.in_(idf_map.keys()))
+            select(RetrievalChunk, (-raw_score).label("bm25_score"))
+            .where(*build_structural_filter_clauses(filters))
+            .order_by(raw_score)
+            .limit(fetch_limit)
         )
-
-        postings = (await session.execute(query)).all()
-
-        scores: dict[int, float] = defaultdict(float)
-        chunk_map: dict[int, RetrievalChunk] = {}
-        for posting, chunk in postings:
-            if filters and not matches_structural_filters(chunk, filters):
-                continue
-            chunk_map[chunk.id] = chunk
-            doc_len = max(int(chunk.metadata_json.get("bm25_length", chunk.token_count)), 1)
-            idf = idf_map.get(posting.term, 0.0)
-            tf = posting.term_frequency
-            numerator = tf * (self.k1 + 1)
-            denominator = tf + self.k1 * (
-                1 - self.b + self.b * (doc_len / max(corpus_stat.average_document_length, 1))
-            )
-            scores[chunk.id] += idf * (numerator / denominator)
-
-        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:limit]
+        rows = (await session.execute(query)).all()
         return [
             build_retrieval_evidence(
-                chunk_map[chunk_id],
+                chunk,
                 retrieval_mode="bm25_only",
-                score=score,
+                score=float(score),
+                metadata_extra={"bm25_score": float(score)},
             )
-            for chunk_id, score in ranked
+            for chunk, score in rows[:limit]
         ]
-
-
-def chunk_payloads_for_bm25(chunks: list[object]) -> list[dict[str, object]]:
-    payloads: list[dict[str, object]] = []
-    for chunk in chunks:
-        payloads.append(
-            {
-                "chunk_id": chunk["chunk_id"],
-                "content": chunk["content"],
-                "token_count": chunk.get("token_count", estimate_token_count(chunk["content"])),
-            }
-        )
-    return payloads

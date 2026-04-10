@@ -111,8 +111,9 @@ class HealthResponse(BaseModel):
 
 class IngestionSummary(BaseModel):
     retrieval_chunks: int
-    bm25_terms: int
-    source_mode: Literal["markdown", "pdf"]
+    lexical_index: Literal["pg_textsearch"]
+    dense_index: Literal["pgvector_hnsw"]
+    source_mode: Literal["markdown"]
 
 
 class IngestionResult(BaseModel):
