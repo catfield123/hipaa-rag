@@ -111,6 +111,10 @@ class AnsweringService:
         if outline_follow_up is not None:
             return outline_follow_up
 
+        section_follow_up = self._section_follow_up_decision(question, evidence)
+        if section_follow_up is not None:
+            return section_follow_up
+
         fallback = self._fallback_evidence_decision(
             question=question,
             intent=intent,
@@ -237,6 +241,8 @@ class AnsweringService:
                 "say_not_found_if_insufficient": True,
                 "be_explicit_for_negative_questions": True,
                 "part_or_subpart_outlines_can_support_high_level_answers": True,
+                "do_not_dump_large_verbatim_blocks_unless_user_explicitly_requests_full_text": True,
+                "prefer_a_concise_direct_answer_followed_by_short_supporting_explanation": True,
             },
         }
         messages = [
@@ -246,7 +252,8 @@ class AnsweringService:
                     "You answer questions about HIPAA using only provided evidence. "
                     "Do not hallucinate. If the question is an existence check, "
                     "answer only from the retrieved BM25 or hybrid evidence. "
-                    "Use the structural references in each chunk when citing support."
+                    "Use the structural references in each chunk when citing support. "
+                    "Do not paste long evidence blocks verbatim unless the user explicitly asked for the full text."
                 ),
             },
             {
@@ -761,6 +768,52 @@ class AnsweringService:
             next_queries=next_queries,
         )
 
+    def _section_follow_up_decision(
+        self,
+        question: str,
+        evidence: list[RetrievalEvidence],
+    ) -> EvidenceDecision | None:
+        existing_full_sections = {
+            item.metadata.get("section_number")
+            for item in evidence
+            if item.retrieval_mode == "structure_lookup"
+            and item.metadata.get("content_type") == "section_text"
+            and item.metadata.get("section_number")
+        }
+
+        ranked_sections = self._best_referenced_sections(question, evidence)
+        next_queries: list[QueryVariant] = []
+        missing_information: list[str] = []
+        for section in ranked_sections[:2]:
+            section_number = str(section.get("section_number") or "").strip()
+            if not section_number or section_number in existing_full_sections:
+                continue
+            section_title = str(section.get("section_title") or "").strip()
+            next_queries.append(
+                QueryVariant(
+                    text=f"{section_number} {section_title}".strip(),
+                    mode="structure_lookup",
+                    structure_target="section_text",
+                    strategy="section_chunk_to_full_text",
+                    reason="Retrieved chunks suggest this section is central, so fetch the full section text.",
+                    filters=StructuralFilters(section_number=section_number),
+                )
+            )
+            missing_information.append(
+                f"Need the full text of § {section_number} to answer the question precisely."
+            )
+
+        next_queries = self._sanitize_query_variants(next_queries)
+        if not next_queries:
+            return None
+
+        return EvidenceDecision(
+            sufficient=False,
+            rationale="Partial chunks point to specific relevant sections, but the full section text is still needed.",
+            missing_information=unique_preserve_order(missing_information),
+            next_queries=next_queries,
+        )
+
     def _best_outline_sections(
         self,
         question: str,
@@ -795,6 +848,66 @@ class AnsweringService:
             )
         )
         return [section for _, section in ranked]
+
+    def _best_referenced_sections(
+        self,
+        question: str,
+        evidence: list[RetrievalEvidence],
+    ) -> list[dict[str, object]]:
+        question_tokens = set(tokenize(question))
+        if not question_tokens:
+            question_tokens = {token.lower() for token in re.findall(r"[a-z][a-z0-9']*", question.lower())}
+
+        grouped: dict[str, dict[str, object]] = {}
+        for item in evidence:
+            section_number, section_title = self._parse_section_reference(item.section)
+            if not section_number:
+                continue
+
+            entry = grouped.setdefault(
+                section_number,
+                {
+                    "section_number": section_number,
+                    "section_title": section_title,
+                    "score": 0.0,
+                    "count": 0,
+                },
+            )
+            entry["count"] = int(entry["count"]) + 1
+            entry["score"] = float(entry["score"]) + float(item.score)
+
+            title_tokens = set(tokenize(section_title))
+            entry["score"] = float(entry["score"]) + float(len(question_tokens & title_tokens))
+
+            item_text = str(item.text or "").lower()
+            if "family" in question.lower() and "family" in item_text:
+                entry["score"] = float(entry["score"]) + 2.0
+            if "law enforcement" in question.lower() and "law enforcement" in item_text:
+                entry["score"] = float(entry["score"]) + 2.0
+            if "purpose" in question.lower() and "purpose" in section_title.lower():
+                entry["score"] = float(entry["score"]) + 3.0
+            if "definition" in question.lower() and "definition" in section_title.lower():
+                entry["score"] = float(entry["score"]) + 3.0
+            if "scope" in question.lower() and "applicability" in section_title.lower():
+                entry["score"] = float(entry["score"]) + 2.0
+
+        ranked = sorted(
+            grouped.values(),
+            key=lambda item: (
+                -float(item["score"]),
+                -int(item["count"]),
+                str(item["section_number"]),
+            ),
+        )
+        return ranked
+
+    def _parse_section_reference(self, section_label: str | None) -> tuple[str | None, str]:
+        if not section_label:
+            return None, ""
+        match = re.match(r"^§\s*(\d+\.\d+)\b\s*(.*)$", section_label.strip())
+        if not match:
+            return None, section_label.strip()
+        return match.group(1), match.group(2).strip()
 
     def _outline_sections(self, evidence: RetrievalEvidence) -> list[dict[str, object]]:
         content_type = evidence.metadata.get("content_type")
