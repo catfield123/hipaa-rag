@@ -53,6 +53,15 @@ def ask_hipaa(question: str) -> tuple[str, str, str]:
         return "", "", f"Ошибка запроса: {exc}"
 
 
+def _disable_submit():
+    return gr.update(interactive=False)
+
+
+def _run_query(question: str):
+    answer, quotes_text, sources_text = ask_hipaa(question)
+    return answer, quotes_text, sources_text, gr.update(interactive=True)
+
+
 with gr.Blocks() as demo:
     gr.Markdown("## HIPAA RAG")
     gr.Markdown("Задавайте вопросы по HIPAA. Интерфейс показывает ответ, цитаты и источники без истории чата.")
@@ -61,10 +70,10 @@ with gr.Blocks() as demo:
     quotes_box = gr.Markdown(label="Цитаты")
     sources_box = gr.Markdown(label="Источники")
     submit = gr.Button("Спросить")
-    submit.click(
-        ask_hipaa,
+    submit.click(_disable_submit, outputs=[submit]).then(
+        _run_query,
         inputs=[question_input],
-        outputs=[answer_box, quotes_box, sources_box],
+        outputs=[answer_box, quotes_box, sources_box, submit],
     )
 
 
