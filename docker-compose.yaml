@@ -25,8 +25,6 @@ services:
     restart: unless-stopped
     environment:
       - BACKEND_URL=${BACKEND_URL:-http://nginx/api}
-    ports:
-     - "7860:7860"
 
   nginx:
     image: nginx:1.27-alpine
@@ -49,8 +47,6 @@ services:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
     depends_on:
       - nginx
-    ports:
-      - "4040:4040"
 
 volumes:
   db_data:
