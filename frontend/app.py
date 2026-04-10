@@ -15,14 +15,14 @@ def _render_reference_label(item: dict) -> str:
 
 
 def _render_quotes(quotes: list[dict]) -> str:
-    rendered: list[str] = []
+    blocks: list[str] = []
     for item in quotes:
         label = _render_reference_label(item)
         text = str(item.get("text", "")).strip()
         if not text:
             continue
-        rendered.append(f'- "{text}" ({label})')
-    return "Quotes:\n" + "\n".join(rendered)
+        blocks.append(f"### {label}\n\n{text}")
+    return "\n\n---\n\n".join(blocks)
 
 
 def _render_sources(sources: list[dict]) -> str:
