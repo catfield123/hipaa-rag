@@ -107,6 +107,9 @@ async def query_rag_ws(websocket: WebSocket) -> None:
     async def on_status(event: dict) -> None:
         await websocket.send_json(event)
 
+    async def on_answer_delta(text: str) -> None:
+        await websocket.send_json({"type": "answer_delta", "text": text})
+
     try:
         async with SessionLocal() as session:
             outcome = await answering_service.answer_question(
@@ -117,6 +120,7 @@ async def query_rag_ws(websocket: WebSocket) -> None:
                 hybrid_retriever=hybrid_retriever,
                 structural_retriever=structural_retriever,
                 on_status=on_status,
+                on_answer_delta=on_answer_delta,
             )
     except Exception as exc:
         await websocket.send_json({"type": "error", "message": str(exc)})

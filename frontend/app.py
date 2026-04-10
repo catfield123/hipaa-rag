@@ -69,6 +69,7 @@ def _run_query(question: str):
         ws.connect(_rag_ws_url(), timeout=30)
         ws.settimeout(_WS_RECV_TIMEOUT_SEC)
         ws.send(json.dumps({"question": q}))
+        accumulated_answer = ""
         while True:
             raw = ws.recv()
             if isinstance(raw, bytes):
@@ -78,6 +79,9 @@ def _run_query(question: str):
             if mtype == "status":
                 line = _format_status_line(str(msg.get("message") or ""))
                 yield (line, gr.skip(), gr.skip(), gr.update(interactive=False))
+            elif mtype == "answer_delta":
+                accumulated_answer += str(msg.get("text") or "")
+                yield (accumulated_answer, gr.skip(), gr.skip(), gr.update(interactive=False))
             elif mtype == "result":
                 answer = str(msg.get("answer") or "")
                 quotes = msg.get("quotes") or []

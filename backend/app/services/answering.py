@@ -40,6 +40,7 @@ from app.services.retrieval_components import (
 logger = logging.getLogger(__name__)
 
 AgentStatusEmitter = Callable[[dict[str, Any]], Awaitable[None]]
+AgentAnswerDeltaEmitter = Callable[[str], Awaitable[None]]
 
 _TOOL_LABELS_RU: dict[str, str] = {
     "hybrid_search": "гибридный поиск",
@@ -94,6 +95,7 @@ class AnsweringService:
         hybrid_retriever: HybridRetriever,
         structural_retriever: StructuralContentRetriever,
         on_status: AgentStatusEmitter | None = None,
+        on_answer_delta: AgentAnswerDeltaEmitter | None = None,
     ) -> FunctionAgentResult:
         """Answer a question through explicit retrieval and decision function loops."""
 
@@ -235,6 +237,7 @@ class AnsweringService:
                     question=question,
                     decision=latest_decision,
                     evidence=all_evidence,
+                    on_delta=on_answer_delta,
                 )
                 return FunctionAgentResult(
                     answer=answer,
@@ -270,6 +273,7 @@ class AnsweringService:
             question=question,
             decision=forced_decision,
             evidence=all_evidence,
+            on_delta=on_answer_delta,
         )
         return FunctionAgentResult(
             answer=answer,
@@ -318,20 +322,41 @@ class AnsweringService:
         question: str,
         decision: ResearchDecision,
         evidence: list[RetrievalEvidence],
+        on_delta: AgentAnswerDeltaEmitter | None = None,
     ) -> str:
         """Generate the final answer after the decision function stops retrieval."""
 
-        response = await self.client.chat.completions.create(
+        messages = build_final_answer_messages(
+            question=question,
+            decision=decision.model_dump(),
+            evidence=[item.model_dump() for item in evidence],
+        )
+        fallback = "I could not produce a final answer from the retrieved evidence."
+
+        if on_delta is None:
+            response = await self.client.chat.completions.create(
+                model=self.settings.openai_chat_model,
+                messages=messages,
+            )
+            return (response.choices[0].message.content or "").strip() or fallback
+
+        stream = await self.client.chat.completions.create(
             model=self.settings.openai_chat_model,
-            messages=build_final_answer_messages(
-                question=question,
-                decision=decision.model_dump(),
-                evidence=[item.model_dump() for item in evidence],
-            ),
+            messages=messages,
+            stream=True,
         )
-        return (response.choices[0].message.content or "").strip() or (
-            "I could not produce a final answer from the retrieved evidence."
-        )
+        parts: list[str] = []
+        async for chunk in stream:
+            choice = chunk.choices[0] if chunk.choices else None
+            if choice is None:
+                continue
+            piece = choice.delta.content
+            if piece:
+                parts.append(piece)
+                await on_delta(piece)
+
+        text = "".join(parts).strip() or fallback
+        return text
 
 
 def _merge_evidence(
