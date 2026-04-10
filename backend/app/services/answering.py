@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
 
 from app.config import get_settings
 from app.schemas import EvidenceDecision, QueryPlan, QueryVariant, RetrievalEvidence, StructuralFilters
@@ -78,23 +77,15 @@ class AnsweringService:
         question: str,
         intent: str,
         evidence: list[RetrievalEvidence],
-        exact_phrase_hits: list[dict[str, Any]],
     ) -> EvidenceDecision:
-        if exact_phrase_hits:
-            return EvidenceDecision(
-                sufficient=True,
-                rationale="Exact phrase evidence was found.",
-                follow_up_actions=[],
-            )
-
         if intent == "existence_check":
             sufficient = len(evidence) >= 2
             rationale = (
-                "Enough evidence to distinguish exact wording from related concepts."
+                "Enough retrieval evidence was found to answer the mention/existence question."
                 if sufficient
-                else "Need broader or more literal retrieval for mention check."
+                else "Need broader lexical or hybrid retrieval for the mention check."
             )
-            actions = [] if sufficient else ["exact phrase lookup", "broaden bm25"]
+            actions = [] if sufficient else ["broaden bm25", "hybrid follow-up"]
             return EvidenceDecision(sufficient=sufficient, rationale=rationale, follow_up_actions=actions)
 
         sufficient = len(evidence) >= 3
@@ -109,13 +100,12 @@ class AnsweringService:
         question: str,
         intent: str,
         evidence: list[RetrievalEvidence],
-        exact_phrase_hits: list[dict[str, Any]],
     ) -> str:
-        if not evidence and not exact_phrase_hits:
+        if not evidence:
             return "I could not find enough support in the provided HIPAA text to answer confidently."
 
         if not self.settings.openai_api_key:
-            return self._fallback_answer(question, intent, evidence, exact_phrase_hits)
+            return self._fallback_answer(question, intent, evidence)
 
         evidence_payload = [
             {
@@ -128,7 +118,6 @@ class AnsweringService:
         prompt = {
             "question": question,
             "intent": intent,
-            "exact_phrase_hits": exact_phrase_hits,
             "evidence": evidence_payload,
             "instructions": {
                 "answer_only_from_evidence": True,
@@ -142,7 +131,7 @@ class AnsweringService:
                 "content": (
                     "You answer questions about HIPAA using only provided evidence. "
                     "Do not hallucinate. If the question is an existence check, "
-                    "clearly separate exact wording from related concepts."
+                    "answer only from the retrieved BM25 or hybrid evidence."
                 ),
             },
             {
@@ -157,14 +146,13 @@ class AnsweringService:
             )
             return (response.choices[0].message.content or "").strip()
         except Exception:
-            return self._fallback_answer(question, intent, evidence, exact_phrase_hits)
+            return self._fallback_answer(question, intent, evidence)
 
     def _fallback_query_plan(self, user_query: str) -> QueryPlan:
         cleaned = re.sub(r"\bhipaa\b", "", user_query, flags=re.IGNORECASE).strip(" ?")
         keywords = tokenize(cleaned) or tokenize(user_query)
         exact_query = cleaned if cleaned else user_query.strip()
         broad_query = " ".join(unique_preserve_order(keywords[:4])) or exact_query
-        semantic_query = broad_query
         inferred_filters = self._infer_structural_filters(user_query)
 
         lowered = user_query.lower()
@@ -174,26 +162,19 @@ class AnsweringService:
                 QueryVariant(
                     text=exact_query,
                     mode="bm25_only",
-                    strategy="bm25_exact",
-                    reason="Check exact wording directly in the corpus.",
+                    strategy="bm25_literal",
+                    reason="Use lexical retrieval for mention or existence checks.",
                     filters=inferred_filters,
                 ),
                 QueryVariant(
                     text=broad_query,
-                    mode="bm25_only",
-                    strategy="bm25_broad",
-                    reason="Check whether related literal terminology appears.",
-                    filters=inferred_filters,
-                ),
-                QueryVariant(
-                    text=semantic_query,
                     mode="hybrid",
-                    strategy="semantic_probe",
-                    reason="Look for nearby concepts if wording differs.",
+                    strategy="hybrid_support",
+                    reason="Broaden recall with semantic support around the lexical anchor.",
                     filters=inferred_filters,
                 ),
             ]
-            return QueryPlan(intent=intent, needs_exact_phrase_check=True, queries=queries)
+            return QueryPlan(intent=intent, queries=queries)
 
         if any(word in lowered for word in ("quote", "cite", "specific regulation", "full text")):
             intent = "quote_request"
@@ -255,19 +236,15 @@ class AnsweringService:
         question: str,
         intent: str,
         evidence: list[RetrievalEvidence],
-        exact_phrase_hits: list[dict[str, Any]],
     ) -> str:
         if intent == "existence_check":
-            if exact_phrase_hits:
-                sources = ", ".join(hit["source_label"] for hit in exact_phrase_hits[:3])
-                return f"The document appears to mention the exact phrase or a direct match in {sources}."
             if evidence:
                 sources = ", ".join(item.source_label for item in evidence[:3])
                 return (
-                    "I found related HIPAA passages, but I did not find a confirmed exact phrase match. "
-                    f"Closest sources: {sources}."
+                    "I found HIPAA passages relevant to that mention or existence question. "
+                    f"Strongest sources: {sources}."
                 )
-            return "I did not find support for that wording in the provided HIPAA text."
+            return "I did not find enough BM25 or hybrid evidence for that wording in the provided HIPAA text."
 
         lead = evidence[0]
         return (

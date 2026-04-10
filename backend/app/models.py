@@ -29,6 +29,7 @@ class NodeType(str, Enum):
 
 class RetrievalMode(str, Enum):
     bm25_only = "bm25_only"
+    dense = "dense"
     hybrid = "hybrid"
 
 

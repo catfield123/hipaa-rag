@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db_session
-from app.schemas import FetchSpanRequest, HealthResponse, NodeResponse, QuoteSpan
+from app.schemas import FetchSpanRequest, HealthResponse, NodeResponse, QuoteSpan, SearchRequest, SearchResponse
 from app.services.node_fetcher import NodeFetcher
+from app.services.retrieval import RetrievalService
 
 
 router = APIRouter(tags=["admin"])
@@ -30,4 +31,58 @@ async def fetch_span(payload: FetchSpanRequest, session: DbSessionDep) -> QuoteS
         char_start=payload.char_start,
         char_end=payload.char_end,
         expand=payload.expand,
+    )
+
+
+@router.post("/admin/search/bm25")
+async def search_bm25(payload: SearchRequest, session: DbSessionDep) -> SearchResponse:
+    service = RetrievalService()
+    results = await service.bm25_service.search(
+        session=session,
+        query_text=payload.query_text,
+        limit=payload.limit,
+        filters=payload.filters,
+    )
+    return SearchResponse(
+        mode="bm25_only",
+        query_text=payload.query_text,
+        limit=payload.limit,
+        filters=payload.filters,
+        results=results,
+    )
+
+
+@router.post("/admin/search/dense")
+async def search_dense(payload: SearchRequest, session: DbSessionDep) -> SearchResponse:
+    service = RetrievalService()
+    results = await service.dense_search(
+        session=session,
+        query_text=payload.query_text,
+        limit=payload.limit,
+        filters=payload.filters,
+    )
+    return SearchResponse(
+        mode="dense",
+        query_text=payload.query_text,
+        limit=payload.limit,
+        filters=payload.filters,
+        results=results,
+    )
+
+
+@router.post("/admin/search/hybrid")
+async def search_hybrid(payload: SearchRequest, session: DbSessionDep) -> SearchResponse:
+    service = RetrievalService()
+    results = await service.hybrid_search(
+        session=session,
+        query_text=payload.query_text,
+        limit=payload.limit,
+        filters=payload.filters,
+    )
+    return SearchResponse(
+        mode="hybrid",
+        query_text=payload.query_text,
+        limit=payload.limit,
+        filters=payload.filters,
+        results=results,
     )

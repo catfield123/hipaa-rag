@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import DocumentNode, RetrievalChunk
+from app.models import RetrievalChunk
 from app.schemas import QueryPlan, RetrievalEvidence, StructuralFilters
 from app.services.bm25 import BM25Service
 from app.services.embeddings import EmbeddingService
@@ -76,70 +76,36 @@ class RetrievalService:
     ) -> list[RetrievalEvidence]:
         query_embedding = await self.embedding_service.embed_query(query_text)
         distance = RetrievalChunk.embedding.cosine_distance(query_embedding)
-        query = (
-            select(RetrievalChunk, distance.label("distance"))
-            .join(DocumentNode, DocumentNode.id == RetrievalChunk.start_node_id)
-            .where(RetrievalChunk.embedding.is_not(None))
-        )
-        if filters:
-            if filters.part_number:
-                query = query.where(DocumentNode.part_number == filters.part_number)
-            if filters.section_number:
-                query = query.where(DocumentNode.section_number == filters.section_number)
-            if filters.subpart:
-                query = query.where(DocumentNode.subpart == filters.subpart.upper())
-            if filters.marker_path:
-                marker = f"({filters.marker_path[-1]})"
-                query = query.where(DocumentNode.marker == marker)
-        rows = (await session.execute(query.order_by(distance).limit(limit))).all()
-
-        return [
-            RetrievalEvidence(
-                chunk_id=chunk.id,
-                source_label=chunk.source_label,
-                page_start=chunk.page_start,
-                page_end=chunk.page_end,
-                content=chunk.content,
-                content_with_context=chunk.content_with_context,
-                retrieval_mode="hybrid",
-                score=max(0.0, 1.0 - float(distance_value)),
-                metadata=chunk.metadata_json,
-            )
-            for chunk, distance_value in rows
-        ]
-
-    async def exact_phrase_search(
-        self,
-        session: AsyncSession,
-        phrase: str,
-        limit: int = 5,
-    ) -> list[dict[str, int | str]]:
-        if not phrase.strip():
-            return []
-
-        pattern = f"%{phrase.strip()}%"
+        fetch_limit = limit * 10 if filters else limit
         rows = (
             await session.execute(
-                select(DocumentNode)
-                .where(
-                    or_(
-                        DocumentNode.raw_text.ilike(pattern),
-                        DocumentNode.heading.ilike(pattern),
-                    )
-                )
-                .limit(limit)
+                select(RetrievalChunk, distance.label("distance"))
+                .where(RetrievalChunk.embedding.is_not(None))
+                .order_by(distance)
+                .limit(fetch_limit)
             )
-        ).scalars().all()
+        ).all()
 
-        return [
-            {
-                "node_id": node.id,
-                "source_label": node.source_label,
-                "page_start": node.page_start,
-                "page_end": node.page_end,
-            }
-            for node in rows
-        ]
+        evidence: list[RetrievalEvidence] = []
+        for chunk, distance_value in rows:
+            if filters and not self._matches_filters(chunk.metadata_json, filters):
+                continue
+            evidence.append(
+                RetrievalEvidence(
+                    chunk_id=chunk.id,
+                    source_label=chunk.source_label,
+                    page_start=chunk.page_start,
+                    page_end=chunk.page_end,
+                    content=chunk.content,
+                    content_with_context=chunk.content_with_context,
+                    retrieval_mode="dense",
+                    score=max(0.0, 1.0 - float(distance_value)),
+                    metadata=chunk.metadata_json,
+                )
+            )
+            if len(evidence) >= limit:
+                break
+        return evidence
 
     def _rrf_fuse(
         self,
@@ -181,3 +147,44 @@ class RetrievalService:
             evidence_by_id[int(chunk_id)]
             for chunk_id in merged_order[:limit]
         ]
+
+    def _matches_filters(self, metadata: dict[str, object], filters: StructuralFilters) -> bool:
+        if filters.part_number:
+            included_parts = {str(value) for value in metadata.get("included_part_numbers", []) if value is not None}
+            fallback_part = metadata.get("part_number")
+            if fallback_part is not None:
+                included_parts.add(str(fallback_part))
+            if filters.part_number not in included_parts:
+                return False
+
+        if filters.section_number:
+            included_sections = {
+                str(value) for value in metadata.get("included_section_numbers", []) if value is not None
+            }
+            fallback_section = metadata.get("section_number")
+            if fallback_section is not None:
+                included_sections.add(str(fallback_section))
+            if filters.section_number not in included_sections:
+                return False
+
+        if filters.subpart:
+            expected_subpart = filters.subpart.upper()
+            included_subparts = {
+                str(value).upper() for value in metadata.get("included_subparts", []) if value is not None
+            }
+            fallback_subpart = metadata.get("subpart")
+            if fallback_subpart is not None:
+                included_subparts.add(str(fallback_subpart).upper())
+            if expected_subpart not in included_subparts:
+                return False
+
+        if filters.marker_path:
+            expected_marker = f"({filters.marker_path[-1]})"
+            included_markers = {str(value) for value in metadata.get("included_markers", []) if value is not None}
+            fallback_marker = metadata.get("marker")
+            if fallback_marker is not None:
+                included_markers.add(str(fallback_marker))
+            if expected_marker not in included_markers:
+                return False
+
+        return True

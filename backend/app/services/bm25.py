@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import BM25CorpusStat, BM25Posting, BM25Term, DocumentNode, RetrievalChunk
+from app.models import BM25CorpusStat, BM25Posting, BM25Term, RetrievalChunk
 from app.schemas import RetrievalEvidence, StructuralFilters
 from app.services.text_utils import estimate_token_count, tokenize
 
@@ -104,26 +104,16 @@ class BM25Service:
         query = (
             select(BM25Posting, RetrievalChunk)
             .join(RetrievalChunk, RetrievalChunk.id == BM25Posting.chunk_id)
-            .join(DocumentNode, DocumentNode.id == RetrievalChunk.start_node_id)
             .where(BM25Posting.term.in_(idf_map.keys()))
         )
-
-        if filters:
-            if filters.part_number:
-                query = query.where(DocumentNode.part_number == filters.part_number)
-            if filters.section_number:
-                query = query.where(DocumentNode.section_number == filters.section_number)
-            if filters.subpart:
-                query = query.where(DocumentNode.subpart == filters.subpart.upper())
-            if filters.marker_path:
-                marker = f"({filters.marker_path[-1]})"
-                query = query.where(DocumentNode.marker == marker)
 
         postings = (await session.execute(query)).all()
 
         scores: dict[int, float] = defaultdict(float)
         chunk_map: dict[int, RetrievalChunk] = {}
         for posting, chunk in postings:
+            if filters and not self._matches_filters(chunk.metadata_json, filters):
+                continue
             chunk_map[chunk.id] = chunk
             doc_len = max(int(chunk.metadata_json.get("bm25_length", chunk.token_count)), 1)
             idf = idf_map.get(posting.term, 0.0)
@@ -149,6 +139,47 @@ class BM25Service:
             )
             for chunk_id, score in ranked
         ]
+
+    def _matches_filters(self, metadata: dict[str, object], filters: StructuralFilters) -> bool:
+        if filters.part_number:
+            included_parts = {str(value) for value in metadata.get("included_part_numbers", []) if value is not None}
+            fallback_part = metadata.get("part_number")
+            if fallback_part is not None:
+                included_parts.add(str(fallback_part))
+            if filters.part_number not in included_parts:
+                return False
+
+        if filters.section_number:
+            included_sections = {
+                str(value) for value in metadata.get("included_section_numbers", []) if value is not None
+            }
+            fallback_section = metadata.get("section_number")
+            if fallback_section is not None:
+                included_sections.add(str(fallback_section))
+            if filters.section_number not in included_sections:
+                return False
+
+        if filters.subpart:
+            expected_subpart = filters.subpart.upper()
+            included_subparts = {
+                str(value).upper() for value in metadata.get("included_subparts", []) if value is not None
+            }
+            fallback_subpart = metadata.get("subpart")
+            if fallback_subpart is not None:
+                included_subparts.add(str(fallback_subpart).upper())
+            if expected_subpart not in included_subparts:
+                return False
+
+        if filters.marker_path:
+            expected_marker = f"({filters.marker_path[-1]})"
+            included_markers = {str(value) for value in metadata.get("included_markers", []) if value is not None}
+            fallback_marker = metadata.get("marker")
+            if fallback_marker is not None:
+                included_markers.add(str(fallback_marker))
+            if expected_marker not in included_markers:
+                return False
+
+        return True
 
 
 def chunk_payloads_for_bm25(chunks: list[object]) -> list[dict[str, object]]:

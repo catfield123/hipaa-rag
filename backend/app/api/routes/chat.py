@@ -24,24 +24,17 @@ async def query_chat(payload: ChatQueryRequest, session: DbSessionDep) -> ChatQu
 
     plan = await answering_service.plan_queries(payload.question)
     evidence = []
-    exact_phrase_hits: list[dict[str, int | str]] = []
     retrieval_rounds = 0
     failed_queries: list[str] = []
 
     for retrieval_round in range(1, settings.agent_max_rounds + 1):
         retrieval_rounds = retrieval_round
         evidence = await retrieval_service.execute_plan(session=session, plan=plan)
-        if plan.needs_exact_phrase_check:
-            exact_phrase_hits = await retrieval_service.exact_phrase_search(
-                session=session,
-                phrase=plan.queries[0].text,
-            )
 
         decision = await answering_service.judge_evidence(
             question=payload.question,
             intent=plan.intent,
             evidence=evidence,
-            exact_phrase_hits=exact_phrase_hits,
         )
         if decision.sufficient or retrieval_round == settings.agent_max_rounds:
             break
@@ -72,20 +65,6 @@ async def query_chat(payload: ChatQueryRequest, session: DbSessionDep) -> ChatQu
             )
         )
 
-    if not quotes:
-        for hit in exact_phrase_hits[:3]:
-            node_id = int(hit["node_id"])
-            if node_id in seen_node_ids:
-                continue
-            seen_node_ids.add(node_id)
-            quotes.append(
-                await node_fetcher.get_span(
-                    session=session,
-                    node_id=node_id,
-                    expand="paragraph",
-                )
-            )
-
     sources_map: dict[str, SourceItem] = {}
     for item in evidence[:5]:
         sources_map.setdefault(
@@ -96,29 +75,17 @@ async def query_chat(payload: ChatQueryRequest, session: DbSessionDep) -> ChatQu
                 page_end=item.page_end,
             ),
         )
-    for hit in exact_phrase_hits[:5]:
-        source_label = str(hit["source_label"])
-        sources_map.setdefault(
-            source_label,
-            SourceItem(
-                source_label=source_label,
-                page_start=int(hit["page_start"]),
-                page_end=int(hit["page_end"]),
-            ),
-        )
 
     answer = await answering_service.synthesize_answer(
         question=payload.question,
         intent=plan.intent,
         evidence=evidence,
-        exact_phrase_hits=exact_phrase_hits,
     )
     debug = None
     if payload.include_debug:
         debug = {
             "intent": plan.intent,
             "queries": [query.model_dump() for query in plan.queries],
-            "exact_phrase_hits": exact_phrase_hits,
             "evidence": [item.model_dump() for item in evidence],
         }
 

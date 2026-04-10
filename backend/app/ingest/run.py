@@ -32,13 +32,6 @@ async def run_ingestion() -> IngestionResult:
     embeddings = await embedding_service.embed_texts([chunk.content_with_context for chunk in chunks])
 
     async with SessionLocal() as session:
-        await session.execute(delete(BM25Posting))
-        await session.execute(delete(BM25Term))
-        await session.execute(delete(BM25CorpusStat))
-        await session.execute(delete(RetrievalChunk))
-        await session.execute(delete(DocumentNode))
-        await session.flush()
-
         node_id_map: dict[str, int] = {}
         for node in parsed_document.nodes:
             db_node = DocumentNode(
@@ -61,6 +54,20 @@ async def run_ingestion() -> IngestionResult:
         chunk_payloads: list[dict[str, object]] = []
         persisted_chunks: list[RetrievalChunk] = []
         for chunk, embedding in zip(chunks, embeddings, strict=True):
+            included_node_keys = [str(key) for key in chunk.metadata.get("included_node_keys", [])]
+            included_node_ids = [
+                node_id_map[node_key]
+                for node_key in included_node_keys
+                if node_key in node_id_map
+            ]
+            included_section_keys = [str(key) for key in chunk.metadata.get("included_section_keys", [])]
+            included_section_ids = [
+                node_id_map[section_key]
+                for section_key in included_section_keys
+                if section_key in node_id_map
+            ]
+            start_section_node_key = str(chunk.metadata.get("start_section_node_key", ""))
+            end_section_node_key = str(chunk.metadata.get("end_section_node_key", ""))
             db_chunk = RetrievalChunk(
                 start_node_id=node_id_map[chunk.start_node_key],
                 end_node_id=node_id_map[chunk.end_node_key],
@@ -78,6 +85,23 @@ async def run_ingestion() -> IngestionResult:
                     "start_node_id": node_id_map[chunk.start_node_key],
                     "end_node_id": node_id_map[chunk.end_node_key],
                     "quote_node_id": node_id_map[chunk.quote_node_key],
+                    "section_node_id": (
+                        node_id_map[start_section_node_key]
+                        if start_section_node_key in node_id_map
+                        else None
+                    ),
+                    "start_section_node_id": (
+                        node_id_map[start_section_node_key]
+                        if start_section_node_key in node_id_map
+                        else None
+                    ),
+                    "end_section_node_id": (
+                        node_id_map[end_section_node_key]
+                        if end_section_node_key in node_id_map
+                        else None
+                    ),
+                    "included_node_ids": included_node_ids,
+                    "included_section_ids": included_section_ids,
                     "char_start": chunk.char_start,
                     "char_end": chunk.char_end,
                 },

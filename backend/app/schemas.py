@@ -33,7 +33,6 @@ class QueryPlan(BaseModel):
         "list_references",
         "ambiguous",
     ]
-    needs_exact_phrase_check: bool = False
     queries: list[QueryVariant]
     answer_constraints: AnswerConstraints = Field(default_factory=AnswerConstraints)
 
@@ -45,7 +44,7 @@ class RetrievalEvidence(BaseModel):
     page_end: int
     content: str
     content_with_context: str
-    retrieval_mode: Literal["bm25_only", "hybrid"]
+    retrieval_mode: Literal["bm25_only", "dense", "hybrid"]
     score: float
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -84,6 +83,20 @@ class ChatQueryResponse(BaseModel):
     intent: str
     retrieval_rounds: int
     debug: dict[str, Any] | None = None
+
+
+class SearchRequest(BaseModel):
+    query_text: str = Field(min_length=1)
+    limit: int = Field(default=10, ge=1, le=100)
+    filters: StructuralFilters | None = None
+
+
+class SearchResponse(BaseModel):
+    mode: Literal["bm25_only", "dense", "hybrid"]
+    query_text: str
+    limit: int
+    filters: StructuralFilters | None = None
+    results: list[RetrievalEvidence] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):
