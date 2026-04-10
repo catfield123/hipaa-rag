@@ -20,6 +20,13 @@ from app.services.text_utils import estimate_token_count
 PART_LABEL_RE = re.compile(r"^PART\s+(\d+)\b(?:\s+(.*))?$")
 SUBPART_LABEL_RE = re.compile(r"^Subpart\s+([A-Z])(?:\s*-\s*(.*))?$", re.IGNORECASE)
 SECTION_LABEL_RE = re.compile(r"^§\s*(\d+\.\d+)\b(?:\s+(.*))?$")
+BM25_INDEX_NAME = "retrieval_chunks_search_text_bm25_idx"
+BM25_INDEX_SQL = f"""
+CREATE INDEX {BM25_INDEX_NAME}
+ON retrieval_chunks
+USING bm25 (search_text)
+WITH (text_config = 'english')
+"""
 
 def _normalize_optional(value: object) -> str | None:
     if value is None:
@@ -272,6 +279,7 @@ async def run_ingestion(
     embeddings = await embedding_service.embed_texts([str(chunk["text"]) for chunk in chunks]) if chunks else []
 
     async with SessionLocal() as session:
+        await session.execute(text(f"DROP INDEX IF EXISTS {BM25_INDEX_NAME}"))
         await session.execute(delete(StructuralContent))
         await session.execute(delete(RetrievalChunk))
 
@@ -299,7 +307,7 @@ async def run_ingestion(
             session.add(structural_item)
 
         await session.flush()
-        await session.execute(text("SELECT bm25_force_merge('retrieval_chunks_search_text_bm25_idx')"))
+        await session.execute(text(BM25_INDEX_SQL))
 
         summary = IngestionSummary(
             retrieval_chunks=len(chunks),
