@@ -67,8 +67,10 @@ with gr.Blocks() as demo:
     gr.Markdown("Задавайте вопросы по HIPAA. Интерфейс показывает ответ, цитаты и источники без истории чата.")
     question_input = gr.Textbox(label="Вопрос", placeholder="Например: Does HIPAA mention encryption best practices?")
     answer_box = gr.Markdown(label="Ответ")
-    quotes_box = gr.Markdown(label="Цитаты")
-    sources_box = gr.Markdown(label="Источники")
+    with gr.Accordion("Цитаты", open=False):
+        quotes_box = gr.Markdown()
+    with gr.Accordion("Источники", open=False):
+        sources_box = gr.Markdown()
     submit = gr.Button("Спросить")
     submit.click(_disable_submit, outputs=[submit]).then(
         _run_query,
