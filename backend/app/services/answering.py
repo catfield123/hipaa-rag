@@ -42,18 +42,18 @@ logger = logging.getLogger(__name__)
 AgentStatusEmitter = Callable[[dict[str, Any]], Awaitable[None]]
 AgentAnswerDeltaEmitter = Callable[[str], Awaitable[None]]
 
-_TOOL_LABELS_RU: dict[str, str] = {
-    "hybrid_search": "гибридный поиск",
-    "bm25_search": "точное совпадение (BM25)",
-    "lookup_structural_content": "структурный контент",
-    "get_section_text": "текст секции",
-    "list_part_outline": "оглавление части",
-    "list_subpart_outline": "оглавление подчасти",
+_TOOL_LABELS: dict[str, str] = {
+    "hybrid_search": "hybrid search",
+    "bm25_search": "keyword match (BM25)",
+    "lookup_structural_content": "structural content",
+    "get_section_text": "section text",
+    "list_part_outline": "part outline",
+    "list_subpart_outline": "subpart outline",
 }
 
 
-def _tool_label_ru(function_name: str) -> str:
-    return _TOOL_LABELS_RU.get(function_name, function_name)
+def _tool_label(function_name: str) -> str:
+    return _TOOL_LABELS.get(function_name, function_name)
 
 
 def _truncate_text(text: str, *, limit: int = 280) -> str:
@@ -124,7 +124,7 @@ class AnsweringService:
 
         await emit(
             phase="start",
-            message="Подготовка агента и поиска по базе HIPAA…",
+            message="Preparing the agent and HIPAA knowledge-base search…",
         )
         function_executor = RetrievalFunctionExecutor(
             session=session,
@@ -147,7 +147,7 @@ class AnsweringService:
                 phase="plan",
                 round_number=round_number,
                 message=(
-                    f"Раунд {round_number} из {max_rounds}: выбор запросов к инструментам поиска…"
+                    f"Round {round_number} of {max_rounds}: choosing retrieval tool queries…"
                 ),
             )
             retrieval_messages = build_retrieval_round_messages(
@@ -186,7 +186,7 @@ class AnsweringService:
                     round_number=round_number,
                     tool=tool_name,
                     message=(
-                        f"Раунд {round_number}: поиск — {_tool_label_ru(tool_name)}…"
+                        f"Round {round_number}: retrieving — {_tool_label(tool_name)}…"
                     ),
                 )
                 try:
@@ -220,7 +220,7 @@ class AnsweringService:
             await emit(
                 phase="decide",
                 round_number=round_number,
-                message=f"Раунд {round_number}: оценка, достаточно ли источников для ответа…",
+                message=f"Round {round_number}: checking whether evidence is sufficient…",
             )
             latest_decision = await self._decide_next_step(
                 question=question,
@@ -231,7 +231,7 @@ class AnsweringService:
             if not latest_decision.continue_retrieval:
                 await emit(
                     phase="answer",
-                    message="Формирование итогового ответа по найденным источникам…",
+                    message="Generating the final answer from retrieved sources…",
                 )
                 answer = await self._generate_final_answer(
                     question=question,
@@ -251,15 +251,15 @@ class AnsweringService:
                 phase="decide",
                 round_number=round_number,
                 message=(
-                    f"Раунд {round_number}: нужны дополнительные источники. "
-                    f"Обоснование: {rationale_snippet}"
+                    f"Round {round_number}: more sources needed. "
+                    f"Rationale: {rationale_snippet}"
                 ),
             )
 
         await emit(
             phase="answer",
             message=(
-                f"Достигнут лимит раундов ({max_rounds}). Формирование ответа по имеющимся источникам…"
+                f"Retrieval round limit reached ({max_rounds}). Generating an answer from available sources…"
             ),
         )
         forced_decision = latest_decision or ResearchDecision(

@@ -23,7 +23,7 @@ def _rag_ws_url() -> str:
 
 
 def _format_status_line(message: str) -> str:
-    return f"*Сейчас:* {message}"
+    return f"*Current:* {message}"
 
 
 def _render_reference_label(item: dict) -> str:
@@ -60,7 +60,7 @@ def _run_query(question: str):
     )
     q = (question or "").strip()
     if not q:
-        yield ("", "", "Введите вопрос", gr.update(interactive=True))
+        yield ("", "", "Enter a question.", gr.update(interactive=True))
         return
 
     ws: websocket.WebSocket | None = None
@@ -91,13 +91,13 @@ def _run_query(question: str):
                 yield (answer, quotes_text, sources_text, gr.update(interactive=True))
                 return
             elif mtype == "error":
-                err = str(msg.get("message") or "ошибка")
-                yield ("", "", f"Ошибка: {err}", gr.update(interactive=True))
+                err = str(msg.get("message") or "error")
+                yield ("", "", f"Error: {err}", gr.update(interactive=True))
                 return
     except TimeoutError:
-        yield ("", "", "Превышено время ожидания ответа.", gr.update(interactive=True))
+        yield ("", "", "Response timed out.", gr.update(interactive=True))
     except Exception as exc:
-        yield ("", "", f"Ошибка запроса: {exc}", gr.update(interactive=True))
+        yield ("", "", f"Request error: {exc}", gr.update(interactive=True))
     finally:
         if ws is not None:
             try:
@@ -108,13 +108,18 @@ def _run_query(question: str):
 
 with gr.Blocks() as demo:
     gr.Markdown("## HIPAA RAG")
-    gr.Markdown("Задавайте вопросы по HIPAA. Интерфейс показывает ответ, цитаты и источники без истории чата.")
-    question_input = gr.Textbox(label="Вопрос", placeholder="Например: Does HIPAA mention encryption best practices?")
-    submit = gr.Button("Спросить")
-    answer_box = gr.Markdown(label="Ответ")
-    with gr.Accordion("Цитаты", open=False):
+    gr.Markdown(
+        "Ask questions about HIPAA. This UI shows the answer, quotes, and sources without chat history."
+    )
+    question_input = gr.Textbox(
+        label="Question",
+        placeholder="e.g. Does HIPAA mention encryption best practices?",
+    )
+    submit = gr.Button("Ask")
+    answer_box = gr.Markdown(label="Answer")
+    with gr.Accordion("Quotes", open=False):
         quotes_box = gr.Markdown()
-    with gr.Accordion("Источники", open=False):
+    with gr.Accordion("Sources", open=False):
         sources_box = gr.Markdown()
     submit.click(
         _run_query,
