@@ -65,7 +65,8 @@ class QuoteSpan(BaseModel):
 class EvidenceDecision(BaseModel):
     sufficient: bool
     rationale: str
-    follow_up_actions: list[str] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    next_queries: list[QueryVariant] = Field(default_factory=list)
 
 
 class SourceItem(BaseModel):

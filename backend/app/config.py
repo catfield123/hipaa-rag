@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     dense_limit: int = 24
     bm25_limit: int = 24
     hybrid_rrf_k: int = 60
-    agent_max_rounds: int = 3
+    agent_max_rounds: int = 5
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@db:5432/hipaa_rag"
     )
