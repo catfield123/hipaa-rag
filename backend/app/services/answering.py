@@ -2,99 +2,54 @@
 
 from __future__ import annotations
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import get_settings
-from app.schemas import EvidenceDecision, QueryPlan, QueryVariant, RetrievalEvidence
 from app.services.answering_components import (
-    AnswerSynthesizer,
-    EvidenceAssessor,
-    QueryPlanner,
-    StructuralQueryInterpreter,
+    QuestionStructureAnalyzer,
+    QuestionStructureParser,
+    ToolAgentResult,
+    ToolDrivenAnsweringAgent,
 )
 from app.services.openai_client import get_openai_client
+from app.services.retrieval_components import BM25Service, DenseRetriever, HybridRetriever, StructuralContentRetriever
 
 
 class AnsweringService:
-    """Thin facade over the decomposed answering pipeline components."""
+    """Facade over the tool-driven answering agent."""
 
     def __init__(self) -> None:
         self.settings = get_settings()
         self.client = get_openai_client()
-        self.interpreter = StructuralQueryInterpreter()
-        self.planner = QueryPlanner(
+        self.structure_parser = QuestionStructureParser()
+        self.structure_analyzer = QuestionStructureAnalyzer(
             settings=self.settings,
             client=self.client,
-            interpreter=self.interpreter,
+            parser=self.structure_parser,
         )
-        self.assessor = EvidenceAssessor(
+        self.tool_agent = ToolDrivenAnsweringAgent(
             settings=self.settings,
             client=self.client,
-            interpreter=self.interpreter,
-        )
-        self.synthesizer = AnswerSynthesizer(
-            settings=self.settings,
-            client=self.client,
-            interpreter=self.interpreter,
+            structure_analyzer=self.structure_analyzer,
         )
 
-    async def plan_queries(
-        self,
-        user_query: str,
-        retrieval_round: int = 1,
-        previous_failed_queries: list[str] | None = None,
-        intent_hint: str | None = None,
-    ) -> QueryPlan:
-        """Plan retrieval queries for the incoming question."""
-
-        return await self.planner.plan_queries(
-            user_query,
-            retrieval_round=retrieval_round,
-            previous_failed_queries=previous_failed_queries,
-            intent_hint=intent_hint,
-        )
-
-    async def assess_evidence(
-        self,
-        question: str,
-        intent: str,
-        evidence: list[RetrievalEvidence],
-        attempted_queries: list[QueryVariant],
-        retrieval_round: int,
-    ) -> EvidenceDecision:
-        """Judge whether the current evidence set is sufficient."""
-
-        return await self.assessor.assess_evidence(
-            question=question,
-            intent=intent,
-            evidence=evidence,
-            attempted_queries=attempted_queries,
-            retrieval_round=retrieval_round,
-        )
-
-    async def synthesize_answer(
-        self,
-        question: str,
-        intent: str,
-        evidence: list[RetrievalEvidence],
-    ) -> str:
-        """Synthesize a final answer from retrieved evidence."""
-
-        return await self.synthesizer.synthesize_answer(
-            question=question,
-            intent=intent,
-            evidence=evidence,
-        )
-
-    def render_insufficient_answer(
+    async def answer_question(
         self,
         *,
-        evidence: list[RetrievalEvidence],
-        rationale: str,
-        retrieval_rounds: int,
-    ) -> str:
-        """Render a fallback answer for insufficient-evidence cases."""
+        question: str,
+        session: AsyncSession,
+        bm25_service: BM25Service,
+        dense_retriever: DenseRetriever,
+        hybrid_retriever: HybridRetriever,
+        structural_retriever: StructuralContentRetriever,
+    ) -> ToolAgentResult:
+        """Answer a question through LLM-selected retrieval tools."""
 
-        return self.synthesizer.render_insufficient_answer(
-            evidence=evidence,
-            rationale=rationale,
-            retrieval_rounds=retrieval_rounds,
+        return await self.tool_agent.answer_question(
+            question=question,
+            session=session,
+            bm25_service=bm25_service,
+            dense_retriever=dense_retriever,
+            hybrid_retriever=hybrid_retriever,
+            structural_retriever=structural_retriever,
         )

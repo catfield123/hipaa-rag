@@ -7,19 +7,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db_session
 from app.schemas import HealthResponse, SearchRequest, SearchResponse
-from app.services.retrieval import RetrievalService
+from app.services.retrieval_components import BM25Service, DenseRetriever, HybridRetriever, StructuralContentRetriever
+from app.services.retrieval_components.dependencies import (
+    get_bm25_service,
+    get_dense_retriever,
+    get_hybrid_retriever,
+    get_structural_content_retriever,
+)
 
 router = APIRouter(tags=["admin"])
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
-def get_retrieval_service() -> RetrievalService:
-    """Provide the retrieval facade used by admin debugging endpoints."""
-
-    return RetrievalService()
-
-
-RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]
+Bm25ServiceDep = Annotated[BM25Service, Depends(get_bm25_service)]
+DenseRetrieverDep = Annotated[DenseRetriever, Depends(get_dense_retriever)]
+HybridRetrieverDep = Annotated[HybridRetriever, Depends(get_hybrid_retriever)]
+StructuralRetrieverDep = Annotated[StructuralContentRetriever, Depends(get_structural_content_retriever)]
 
 
 @router.get("/health")
@@ -33,11 +36,11 @@ async def health() -> HealthResponse:
 async def search_bm25(
     payload: SearchRequest,
     session: DbSessionDep,
-    retrieval_service: RetrievalServiceDep,
+    bm25_service: Bm25ServiceDep,
 ) -> SearchResponse:
     """Run BM25 retrieval for debugging."""
 
-    results = await retrieval_service.bm25_service.search(
+    results = await bm25_service.search(
         session=session,
         query_text=payload.query_text,
         limit=payload.limit,
@@ -56,11 +59,11 @@ async def search_bm25(
 async def search_dense(
     payload: SearchRequest,
     session: DbSessionDep,
-    retrieval_service: RetrievalServiceDep,
+    dense_retriever: DenseRetrieverDep,
 ) -> SearchResponse:
     """Run dense retrieval for debugging."""
 
-    results = await retrieval_service.dense_search(
+    results = await dense_retriever.search(
         session=session,
         query_text=payload.query_text,
         limit=payload.limit,
@@ -79,11 +82,11 @@ async def search_dense(
 async def search_hybrid(
     payload: SearchRequest,
     session: DbSessionDep,
-    retrieval_service: RetrievalServiceDep,
+    hybrid_retriever: HybridRetrieverDep,
 ) -> SearchResponse:
     """Run hybrid retrieval for debugging."""
 
-    results = await retrieval_service.hybrid_search(
+    results = await hybrid_retriever.search(
         session=session,
         query_text=payload.query_text,
         limit=payload.limit,
@@ -102,14 +105,14 @@ async def search_hybrid(
 async def search_structure(
     payload: SearchRequest,
     session: DbSessionDep,
-    retrieval_service: RetrievalServiceDep,
+    structural_retriever: StructuralRetrieverDep,
 ) -> SearchResponse:
     """Run direct structural content lookup for debugging."""
 
     if payload.structure_target is None:
         raise HTTPException(status_code=400, detail="structure_target is required for structure lookup.")
 
-    results = await retrieval_service.lookup_structural_content(
+    results = await structural_retriever.lookup(
         session=session,
         target=payload.structure_target,
         limit=payload.limit,
