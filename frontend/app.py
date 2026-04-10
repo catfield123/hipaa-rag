@@ -60,8 +60,6 @@ def _run_query(question: str):
         gr.skip(),
         gr.skip(),
         gr.update(interactive=False),
-        gr.update(),
-        gr.update(),
     )
     answer, quotes_text, sources_text = ask_hipaa(question)
     yield (
@@ -69,8 +67,6 @@ def _run_query(question: str):
         quotes_text,
         sources_text,
         gr.update(interactive=True),
-        gr.update(visible=True),
-        gr.update(visible=True),
     )
 
 
@@ -79,15 +75,15 @@ with gr.Blocks() as demo:
     gr.Markdown("Задавайте вопросы по HIPAA. Интерфейс показывает ответ, цитаты и источники без истории чата.")
     question_input = gr.Textbox(label="Вопрос", placeholder="Например: Does HIPAA mention encryption best practices?")
     answer_box = gr.Markdown(label="Ответ")
-    with gr.Accordion("Цитаты", open=False, visible=False) as quotes_accordion:
+    with gr.Accordion("Цитаты", open=False):
         quotes_box = gr.Markdown()
-    with gr.Accordion("Источники", open=False, visible=False) as sources_accordion:
+    with gr.Accordion("Источники", open=False):
         sources_box = gr.Markdown()
     submit = gr.Button("Спросить")
     submit.click(
         _run_query,
         inputs=[question_input],
-        outputs=[answer_box, quotes_box, sources_box, submit, quotes_accordion, sources_accordion],
+        outputs=[answer_box, quotes_box, sources_box, submit],
         show_progress="hidden",
     )
 
