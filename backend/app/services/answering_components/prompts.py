@@ -39,7 +39,6 @@ FINAL_ANSWER_SYSTEM_PROMPT = (
 def build_retrieval_round_messages(
     *,
     question: str,
-    explicit_structural_references: dict[str, Any] | None,
     evidence: list[dict[str, Any]],
     prior_decision: dict[str, Any] | None,
     round_number: int,
@@ -53,8 +52,6 @@ def build_retrieval_round_messages(
             "content": (
                 f"Retrieval round: {round_number}\n\n"
                 f"Question:\n{question}\n\n"
-                "Explicit structural references:\n"
-                f"{json.dumps(explicit_structural_references, ensure_ascii=True)}\n\n"
                 "Evidence already collected:\n"
                 f"{json.dumps(evidence, ensure_ascii=True)}\n\n"
                 "Previous decision:\n"
@@ -67,7 +64,6 @@ def build_retrieval_round_messages(
 def build_research_decision_messages(
     *,
     question: str,
-    explicit_structural_references: dict[str, Any] | None,
     evidence: list[dict[str, Any]],
     round_number: int,
 ) -> list[dict[str, str]]:
@@ -80,8 +76,6 @@ def build_research_decision_messages(
             "content": (
                 f"Decision round after retrieval round: {round_number}\n\n"
                 f"Question:\n{question}\n\n"
-                "Explicit structural references:\n"
-                f"{json.dumps(explicit_structural_references, ensure_ascii=True)}\n\n"
                 "Current evidence:\n"
                 f"{json.dumps(evidence, ensure_ascii=True)}"
             ),

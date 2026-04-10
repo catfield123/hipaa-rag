@@ -27,7 +27,6 @@ from app.services.answering_components.prompts import (
     build_research_decision_messages,
     build_retrieval_round_messages,
 )
-from app.services.answering_components.structure import QuestionStructureParser
 from app.services.openai_client import get_openai_client
 from app.services.retrieval_components import (
     BM25Service,
@@ -58,11 +57,9 @@ class AnsweringService:
         *,
         settings: Settings | None = None,
         client: AsyncOpenAI | None = None,
-        structure_parser: QuestionStructureParser | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.client = client or get_openai_client()
-        self.structure_parser = structure_parser or QuestionStructureParser()
 
     async def answer_question(
         self,
@@ -77,7 +74,6 @@ class AnsweringService:
         """Answer a question through explicit retrieval and decision function loops."""
 
         self._ensure_openai_configuration()
-        explicit_structural_references = self.structure_parser.infer_structural_filters(question)
         function_executor = RetrievalFunctionExecutor(
             session=session,
             bm25_service=bm25_service,
@@ -96,11 +92,6 @@ class AnsweringService:
         for round_number in range(1, self.settings.agent_max_rounds + 1):
             retrieval_messages = build_retrieval_round_messages(
                 question=question,
-                explicit_structural_references=(
-                    explicit_structural_references.model_dump()
-                    if explicit_structural_references is not None
-                    else None
-                ),
                 evidence=[item.model_dump() for item in all_evidence],
                 prior_decision=latest_decision.model_dump() if latest_decision is not None else None,
                 round_number=round_number,
@@ -154,11 +145,6 @@ class AnsweringService:
 
             latest_decision = await self._decide_next_step(
                 question=question,
-                explicit_structural_references=(
-                    explicit_structural_references.model_dump()
-                    if explicit_structural_references is not None
-                    else None
-                ),
                 evidence=all_evidence,
                 round_number=round_number,
             )
@@ -212,7 +198,6 @@ class AnsweringService:
         self,
         *,
         question: str,
-        explicit_structural_references: dict[str, Any] | None,
         evidence: list[RetrievalEvidence],
         round_number: int,
     ) -> ResearchDecision:
@@ -222,7 +207,6 @@ class AnsweringService:
             model=self.settings.openai_chat_model,
             messages=build_research_decision_messages(
                 question=question,
-                explicit_structural_references=explicit_structural_references,
                 evidence=[item.model_dump() for item in evidence],
                 round_number=round_number,
             ),
