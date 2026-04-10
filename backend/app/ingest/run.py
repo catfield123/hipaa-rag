@@ -47,17 +47,17 @@ async def run_ingestion(
         await session.execute(delete(RetrievalChunk))
 
         for chunk, embedding in zip(chunks, embeddings, strict=True):
-            text = str(chunk["text"]).strip()
+            chunk_text = str(chunk["text"]).strip()
             db_chunk = RetrievalChunk(
                 id=int(chunk["id"]),
                 path=[str(value) for value in chunk.get("path", [])],
                 path_text=str(chunk.get("path_text", "")),
-                text=text,
+                text=chunk_text,
                 section=_normalize_optional(chunk.get("section")),
                 part=_normalize_optional(chunk.get("part")),
                 subpart=_normalize_optional(chunk.get("subpart")),
                 markers=[str(value) for value in chunk.get("markers", [])],
-                token_count=estimate_token_count(text),
+                token_count=estimate_token_count(chunk_text),
                 metadata_json={
                     "source_mode": "markdown",
                     "source_path": source_path,
