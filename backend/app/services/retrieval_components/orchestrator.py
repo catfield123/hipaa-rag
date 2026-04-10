@@ -5,7 +5,8 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.schemas import QueryPlan, RetrievalEvidence
+from app.schemas.planning import QueryPlan
+from app.schemas.retrieval import RetrievalEvidence
 from app.services.retrieval_components.bm25 import BM25Service
 from app.services.retrieval_components.hybrid import HybridRetriever
 from app.services.retrieval_components.structural import StructuralContentRetriever

@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import StructuralContent
-from app.schemas import RetrievalEvidence, StructuralContentTarget, StructuralFilters
+from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
+from app.schemas.types import StructuralContentTarget
 from app.services.chunk_contract import (
     build_structural_content_evidence,
     build_structural_content_filter_clauses,

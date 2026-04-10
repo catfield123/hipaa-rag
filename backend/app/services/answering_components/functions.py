@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas import RetrievalEvidence, StructuralFilters
+from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
 from app.services.retrieval_components import (
     BM25Service,
     DenseRetriever,

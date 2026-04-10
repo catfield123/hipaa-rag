@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RetrievalChunk
-from app.schemas import RetrievalEvidence, StructuralFilters
+from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
 from app.services.chunk_contract import build_retrieval_evidence, build_structural_filter_clauses
 
 

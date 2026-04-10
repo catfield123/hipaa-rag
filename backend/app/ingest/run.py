@@ -12,7 +12,7 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.ingest.chunking import MarkdownChunker
 from app.models import RetrievalChunk, StructuralContent
-from app.schemas import IngestionResult, IngestionSummary
+from app.schemas.system import IngestionResult, IngestionSummary
 from app.services.embeddings import EmbeddingService
 from app.services.text_utils import estimate_token_count
 

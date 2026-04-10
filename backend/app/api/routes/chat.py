@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.chat import ChatQueryHandler
 from app.db import get_db_session
-from app.schemas import ChatQueryRequest, ChatQueryResponse
+from app.schemas.chat import ChatQueryRequest, ChatQueryResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]

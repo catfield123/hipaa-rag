@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from app.schemas import StructuralFilters
+from app.schemas.retrieval import StructuralFilters
 
 
 class QuestionStructureParser:

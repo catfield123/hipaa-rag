@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db_session
-from app.schemas import HealthResponse, SearchRequest, SearchResponse
+from app.schemas.retrieval import SearchRequest, SearchResponse
+from app.schemas.system import HealthResponse
 from app.services.retrieval_components import BM25Service, DenseRetriever, HybridRetriever, StructuralContentRetriever
 from app.services.retrieval_components.dependencies import (
     get_bm25_service,

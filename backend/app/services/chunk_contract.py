@@ -7,7 +7,8 @@ import re
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import RetrievalChunk, StructuralContent
-from app.schemas import RetrievalEvidence, RetrievalMode, StructuralFilters
+from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
+from app.schemas.types import RetrievalMode
 
 
 def build_retrieval_evidence(

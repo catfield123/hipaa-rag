@@ -5,7 +5,8 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.schemas import ChatQueryResponse, QuoteSpan, RetrievalEvidence, SourceItem
+from app.schemas.chat import ChatQueryResponse, QuoteSpan, SourceItem
+from app.schemas.retrieval import RetrievalEvidence
 from app.services.answering import AnsweringService
 from app.services.retrieval_components import (
     BM25Service,
