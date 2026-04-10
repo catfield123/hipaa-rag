@@ -128,8 +128,8 @@ class RetrievalService:
                     func.coalesce(literal(1.0) / (literal(rrf_k) + bm25_hits.c.bm25_rank), literal(0.0))
                     + func.coalesce(literal(1.0) / (literal(rrf_k) + dense_hits.c.dense_rank), literal(0.0))
                 ).label("hybrid_score"),
-                bm25_hits.c.bm25_score.label("bm25_score"),
-                dense_hits.c.dense_score.label("dense_score"),
+                bm25_hits.c.bm25_rank.label("bm25_rank"),
+                dense_hits.c.dense_rank.label("dense_rank"),
             )
             .select_from(
                 bm25_hits.join(
@@ -146,8 +146,8 @@ class RetrievalService:
                 select(
                     RetrievalChunk,
                     fused.c.hybrid_score,
-                    fused.c.bm25_score,
-                    fused.c.dense_score,
+                    (-bm25_order_expr).label("bm25_score"),
+                    (literal(1.0) - dense_distance).label("dense_score"),
                 )
                 .join(fused, fused.c.chunk_id == RetrievalChunk.id)
                 .order_by(fused.c.hybrid_score.desc())
