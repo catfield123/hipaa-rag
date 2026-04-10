@@ -114,6 +114,7 @@ async def run_ingestion() -> IngestionResult:
             )
             for item in bm25_build.terms
         )
+        await session.flush()
         session.add_all(
             BM25Posting(
                 term=str(item["term"]),
