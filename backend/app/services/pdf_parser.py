@@ -136,7 +136,13 @@ class HIPAAPdfParser:
                         nodes.extend(self._flush_section(current_section, current_subpart_key or current_part_key))
 
                     section_number = section_match.group(1)
-                    heading_lines = [section_match.group(2).strip()] if section_match.group(2).strip() else []
+                    section_heading, inline_body = self._split_section_heading_and_inline_body(
+                        section_match.group(2).strip()
+                    )
+                    heading_lines = [section_heading] if section_heading else []
+                    section_lines: list[LineEntry] = []
+                    if inline_body:
+                        section_lines.append(LineEntry(text=inline_body, page_number=page_number))
                     j = i + 1
                     while j < len(lines):
                         next_line = lines[j]
@@ -157,6 +163,7 @@ class HIPAAPdfParser:
                         heading=normalize_text(" ".join(heading_lines)),
                         page_start=page_number,
                         page_end=page_number,
+                        lines=section_lines,
                     )
                     i = j
                     continue
@@ -287,6 +294,27 @@ class HIPAAPdfParser:
 
         flush()
         return blocks
+
+    def _split_section_heading_and_inline_body(self, text: str) -> tuple[str, str | None]:
+        normalized = normalize_text(text)
+        if not normalized:
+            return "", None
+
+        if ". " not in normalized:
+            return normalized, None
+
+        heading_candidate, remainder = normalized.split(". ", 1)
+        heading_candidate = f"{heading_candidate.strip()}."
+        remainder = remainder.strip()
+
+        if (
+            3 <= len(heading_candidate) <= 220
+            and remainder
+            and (remainder[0].isalnum() or remainder[0] == "(")
+        ):
+            return heading_candidate, remainder
+
+        return normalized, None
 
     def _extract_clean_pages(self, pdf_path: str) -> list[tuple[int, list[str]]]:
         reader = PdfReader(pdf_path)

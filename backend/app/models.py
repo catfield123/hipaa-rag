@@ -46,7 +46,7 @@ class DocumentNode(Base):
     section_number: Mapped[str | None] = mapped_column(String(32))
     marker: Mapped[str | None] = mapped_column(String(32))
     source_label: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    heading: Mapped[str | None] = mapped_column(String(512))
+    heading: Mapped[str | None] = mapped_column(Text)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     page_start: Mapped[int] = mapped_column(Integer, nullable=False)
     page_end: Mapped[int] = mapped_column(Integer, nullable=False)
