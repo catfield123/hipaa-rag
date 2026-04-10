@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.schemas.types import QueryIntentEnum
+
 FUNCTION_AGENT_SYSTEM_PROMPT = (
     "You are in the retrieval phase of a HIPAA answering agent. "
     "Do not answer the question in plain text during this phase. "
@@ -51,7 +53,22 @@ FINAL_ANSWER_SYSTEM_PROMPT = (
     "If the user asks which sections apply and the evidence does not explicitly contain those sections, "
     "say that the retrieved evidence is insufficient to identify the exact applicable sections. "
     "If the decision says wants_raw_structure=true, return the requested structural content directly and cleanly. "
-    "Otherwise provide a concise direct answer followed by short supporting explanation."
+    "Otherwise provide a concise direct answer followed by short supporting explanation. "
+    "When you present regulatory wording that comes from the evidence, reproduce each evidence item's `text` field "
+    "exactly as provided. Do not replace missing parts with bracketed placeholders such as [conditions apply], "
+    "[purposes], or similar invented fillers. Do not paraphrase inside passages presented as direct regulatory wording. "
+    "If you summarize, label it explicitly as a summary separate from quoted text. "
+    "If a chunk's text is clearly truncated or incomplete in the evidence, say that the retrieved excerpt is partial "
+    "and quote only what appears in the evidence."
+)
+
+# Extra constraints when the planner classified the question as asking for quotes / verbatim regulation text.
+FINAL_ANSWER_QUOTE_REQUEST_SUPPLEMENT = (
+    "The user's intent is to obtain verbatim regulatory text (citation / quote request). "
+    "For each relevant evidence item, show the `path_text` (or section plus markers) then the full `text` field "
+    "exactly as stored—no inline rewriting, no bracketed omissions, no '[conditions apply]' style shortcuts. "
+    "If multiple chunks apply, list them as separate blocks in evidence order. "
+    "If the database excerpt does not contain the full rule, state that explicitly after quoting what was retrieved."
 )
 
 
@@ -113,6 +130,17 @@ def build_research_decision_messages(
     ]
 
 
+def _final_answer_system_content(decision: dict[str, Any]) -> str:
+    """Compose system prompt; add stricter citation rules for quote-style intents."""
+
+    content = FINAL_ANSWER_SYSTEM_PROMPT
+    intent = decision.get("intent")
+    # StrEnum compares equal to its value string, so this works for model_dump() and plain JSON.
+    if intent == QueryIntentEnum.QUOTE_REQUEST:
+        content = f"{content}\n\n{FINAL_ANSWER_QUOTE_REQUEST_SUPPLEMENT}"
+    return content
+
+
 def build_final_answer_messages(
     *,
     question: str,
@@ -122,7 +150,7 @@ def build_final_answer_messages(
     """Build messages for final answer generation."""
 
     return [
-        {"role": "system", "content": FINAL_ANSWER_SYSTEM_PROMPT},
+        {"role": "system", "content": _final_answer_system_content(decision)},
         {
             "role": "user",
             "content": (
