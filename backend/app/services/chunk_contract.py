@@ -8,13 +8,13 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import RetrievalChunk, StructuralContent
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
-from app.schemas.types import RetrievalMode
+from app.schemas.types import RetrievalModeEnum
 
 
 def build_retrieval_evidence(
     chunk: RetrievalChunk,
     *,
-    retrieval_mode: RetrievalMode,
+    retrieval_mode: RetrievalModeEnum,
     score: float,
     metadata_extra: dict[str, object] | None = None,
 ) -> RetrievalEvidence:
@@ -50,7 +50,7 @@ def build_structural_content_evidence(content: StructuralContent) -> RetrievalEv
         part=content.part,
         subpart=content.subpart,
         markers=[],
-        retrieval_mode="structure_lookup",
+        retrieval_mode=RetrievalModeEnum.STRUCTURE_LOOKUP,
         score=1.0,
         metadata={
             **content.metadata_json,

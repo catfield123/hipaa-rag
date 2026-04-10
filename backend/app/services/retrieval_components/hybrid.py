@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.models import RetrievalChunk
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
+from app.schemas.types import RetrievalModeEnum
 from app.services.chunk_contract import build_retrieval_evidence, build_structural_filter_clauses
 from app.services.embeddings import EmbeddingService
 from app.services.retrieval_components.bm25 import BM25Service
@@ -110,7 +111,7 @@ class HybridRetriever:
         return [
             build_retrieval_evidence(
                 chunk,
-                retrieval_mode="hybrid",
+                retrieval_mode=RetrievalModeEnum.HYBRID,
                 score=float(hybrid_score),
                 metadata_extra={
                     "hybrid_score": float(hybrid_score),

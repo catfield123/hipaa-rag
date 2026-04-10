@@ -10,7 +10,7 @@ from app.schemas.planning import (
 )
 from app.schemas.retrieval import RetrievalEvidence, SearchRequest, SearchResponse, StructuralFilters
 from app.schemas.system import HealthResponse, IngestionResult, IngestionSummary
-from app.schemas.types import QueryIntent, QueryMode, RetrievalMode, StructuralContentTarget
+from app.schemas.types import QueryIntentEnum, QueryModeEnum, RetrievalModeEnum, StructuralContentTargetEnum
 
 __all__ = [
     "AnswerConstraints",
@@ -20,17 +20,17 @@ __all__ = [
     "HealthResponse",
     "IngestionResult",
     "IngestionSummary",
-    "QueryIntent",
-    "QueryMode",
+    "QueryIntentEnum",
+    "QueryModeEnum",
     "QueryPlan",
     "QueryVariant",
     "QuoteSpan",
     "ResearchDecision",
     "RetrievalEvidence",
-    "RetrievalMode",
+    "RetrievalModeEnum",
     "SearchRequest",
     "SearchResponse",
     "SourceItem",
-    "StructuralContentTarget",
+    "StructuralContentTargetEnum",
     "StructuralFilters",
 ]

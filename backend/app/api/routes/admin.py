@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db_session
 from app.schemas.retrieval import SearchRequest, SearchResponse
 from app.schemas.system import HealthResponse
+from app.schemas.types import RetrievalModeEnum
 from app.services.retrieval_components import BM25Service, DenseRetriever, HybridRetriever, StructuralContentRetriever
 from app.services.retrieval_components.dependencies import (
     get_bm25_service,
@@ -51,7 +52,7 @@ async def search_bm25(
         filters=payload.filters,
     )
     return SearchResponse(
-        mode="bm25_only",
+        mode=RetrievalModeEnum.BM25_ONLY,
         query_text=payload.query_text,
         limit=payload.limit,
         filters=payload.filters,
@@ -74,7 +75,7 @@ async def search_dense(
         filters=payload.filters,
     )
     return SearchResponse(
-        mode="dense",
+        mode=RetrievalModeEnum.DENSE,
         query_text=payload.query_text,
         limit=payload.limit,
         filters=payload.filters,
@@ -97,7 +98,7 @@ async def search_hybrid(
         filters=payload.filters,
     )
     return SearchResponse(
-        mode="hybrid",
+        mode=RetrievalModeEnum.HYBRID,
         query_text=payload.query_text,
         limit=payload.limit,
         filters=payload.filters,
@@ -123,7 +124,7 @@ async def search_structure(
         filters=payload.filters,
     )
     return SearchResponse(
-        mode="structure_lookup",
+        mode=RetrievalModeEnum.STRUCTURE_LOOKUP,
         query_text=payload.query_text,
         limit=payload.limit,
         filters=payload.filters,

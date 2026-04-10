@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RetrievalChunk
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
+from app.schemas.types import RetrievalModeEnum
 from app.services.chunk_contract import build_retrieval_evidence, build_structural_filter_clauses
 
 
@@ -43,7 +44,7 @@ class BM25Service:
         return [
             build_retrieval_evidence(
                 chunk,
-                retrieval_mode="bm25_only",
+                retrieval_mode=RetrievalModeEnum.BM25_ONLY,
                 score=float(score),
                 metadata_extra={"bm25_score": float(score)},
             )

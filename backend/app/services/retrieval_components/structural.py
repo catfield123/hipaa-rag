@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import StructuralContent
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
-from app.schemas.types import StructuralContentTarget
+from app.schemas.types import StructuralContentTargetEnum
 from app.services.chunk_contract import (
     build_structural_content_evidence,
     build_structural_content_filter_clauses,
@@ -21,7 +21,7 @@ class StructuralContentRetriever:
         self,
         *,
         session: AsyncSession,
-        target: StructuralContentTarget,
+        target: StructuralContentTargetEnum,
         limit: int,
         filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:

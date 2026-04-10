@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.schemas.types import QueryIntentEnum
+
 DECIDE_RESEARCH_STATUS_FUNCTION_NAME = "decide_research_status"
 
 
@@ -25,14 +27,7 @@ def build_research_decision_functions() -> list[dict[str, Any]]:
                     "properties": {
                         "intent": {
                             "type": "string",
-                            "enum": [
-                                "general",
-                                "quote_request",
-                                "existence_check",
-                                "list_references",
-                                "ambiguous",
-                                "structure_lookup",
-                            ],
+                            "enum": [intent.value for intent in QueryIntentEnum],
                         },
                         "wants_raw_structure": {"type": "boolean"},
                         "continue_retrieval": {"type": "boolean"},

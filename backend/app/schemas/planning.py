@@ -5,18 +5,18 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app.schemas.retrieval import StructuralFilters
-from app.schemas.types import QueryIntent, QueryMode, StructuralContentTarget
+from app.schemas.types import QueryIntentEnum, QueryModeEnum, StructuralContentTargetEnum
 
 
 class QueryVariant(BaseModel):
     """A single retrieval query candidate produced by the planner."""
 
     text: str = Field(min_length=1)
-    mode: QueryMode
+    mode: QueryModeEnum
     strategy: str
     reason: str
     filters: StructuralFilters | None = None
-    structure_target: StructuralContentTarget | None = None
+    structure_target: StructuralContentTargetEnum | None = None
 
 
 class AnswerConstraints(BaseModel):
@@ -29,7 +29,7 @@ class AnswerConstraints(BaseModel):
 class QueryPlan(BaseModel):
     """Planner output describing retrieval intent and candidate queries."""
 
-    intent: QueryIntent
+    intent: QueryIntentEnum
     queries: list[QueryVariant]
     answer_constraints: AnswerConstraints = Field(default_factory=AnswerConstraints)
 
@@ -46,7 +46,7 @@ class EvidenceDecision(BaseModel):
 class ResearchDecision(BaseModel):
     """Decision returned after inspecting the evidence gathered so far."""
 
-    intent: QueryIntent
+    intent: QueryIntentEnum
     wants_raw_structure: bool
     continue_retrieval: bool
     rationale: str

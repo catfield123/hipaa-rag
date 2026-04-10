@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
+from app.schemas.types import StructuralContentTargetEnum
 from app.services.retrieval_components import (
     BM25Service,
     DenseRetriever,
@@ -67,7 +68,7 @@ def build_retrieval_functions(*, default_limit: int) -> list[dict[str, Any]]:
                 "properties": {
                     "target": {
                         "type": "string",
-                        "enum": ["section_text", "part_outline", "subpart_outline"],
+                        "enum": [target.value for target in StructuralContentTargetEnum],
                     },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3},
                     "filters": filter_schema,
@@ -174,28 +175,28 @@ class RetrievalFunctionExecutor:
         elif function_name == "lookup_structural_content":
             evidence = await self.structural_retriever.lookup(
                 session=self.session,
-                target=str(args["target"]),
+                target=StructuralContentTargetEnum(str(args["target"])),
                 limit=self._limit(args.get("limit"), upper_bound=10),
                 filters=self._filters(args.get("filters")),
             )
         elif function_name == "get_section_text":
             evidence = await self.structural_retriever.lookup(
                 session=self.session,
-                target="section_text",
+                target=StructuralContentTargetEnum.SECTION_TEXT,
                 limit=1,
                 filters=StructuralFilters(section_number=str(args["section_number"])),
             )
         elif function_name == "list_part_outline":
             evidence = await self.structural_retriever.lookup(
                 session=self.session,
-                target="part_outline",
+                target=StructuralContentTargetEnum.PART_OUTLINE,
                 limit=1,
                 filters=StructuralFilters(part_number=str(args["part_number"])),
             )
         elif function_name == "list_subpart_outline":
             evidence = await self.structural_retriever.lookup(
                 session=self.session,
-                target="subpart_outline",
+                target=StructuralContentTargetEnum.SUBPART_OUTLINE,
                 limit=1,
                 filters=StructuralFilters(
                     part_number=_optional_string(args.get("part_number")),

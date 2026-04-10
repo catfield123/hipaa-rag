@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import RetrievalChunk
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
+from app.schemas.types import RetrievalModeEnum
 from app.services.chunk_contract import build_retrieval_evidence, build_structural_filter_clauses
 from app.services.embeddings import EmbeddingService
 
@@ -42,7 +43,7 @@ class DenseRetriever:
         return [
             build_retrieval_evidence(
                 chunk,
-                retrieval_mode="dense",
+                retrieval_mode=RetrievalModeEnum.DENSE,
                 score=max(0.0, 1.0 - float(distance_value)),
                 metadata_extra={"dense_score": max(0.0, 1.0 - float(distance_value))},
             )

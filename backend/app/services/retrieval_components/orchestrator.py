@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.schemas.planning import QueryPlan
 from app.schemas.retrieval import RetrievalEvidence
+from app.schemas.types import QueryModeEnum
 from app.services.retrieval_components.bm25 import BM25Service
 from app.services.retrieval_components.hybrid import HybridRetriever
 from app.services.retrieval_components.structural import StructuralContentRetriever
@@ -39,14 +40,14 @@ class RetrievalOrchestrator:
 
         evidence_sets: list[list[RetrievalEvidence]] = []
         for variant in plan.queries:
-            if variant.mode == "structure_lookup" and variant.structure_target:
+            if variant.mode == QueryModeEnum.STRUCTURE_LOOKUP and variant.structure_target:
                 evidence = await self.structural_retriever.lookup(
                     session=session,
                     target=variant.structure_target,
                     limit=self.settings.retrieval_limit,
                     filters=variant.filters,
                 )
-            elif variant.mode == "bm25_only":
+            elif variant.mode == QueryModeEnum.BM25_ONLY:
                 evidence = await self.bm25_service.search(
                     session=session,
                     query_text=variant.text,

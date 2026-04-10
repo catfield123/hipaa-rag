@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.config import get_settings
+from app.schemas.types import StructuralContentTargetEnum
 
 
 settings = get_settings()
@@ -49,7 +50,7 @@ class RetrievalChunk(Base):
 class StructuralContent(Base):
     __tablename__ = "structural_content"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    content_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    content_type: Mapped[StructuralContentTargetEnum] = mapped_column(String(32), nullable=False, index=True)
     path: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     path_text: Mapped[str] = mapped_column(Text, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)

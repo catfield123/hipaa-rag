@@ -13,6 +13,7 @@ from app.db import SessionLocal
 from app.ingest.chunking import MarkdownChunker
 from app.models import RetrievalChunk, StructuralContent
 from app.schemas.system import IngestionResult, IngestionSummary
+from app.schemas.types import StructuralContentTargetEnum
 from app.services.embeddings import EmbeddingService
 from app.services.text_utils import estimate_token_count
 
@@ -184,7 +185,7 @@ def _build_structural_content(
     for section_entry in section_groups.values():
         structural_items.append(
             StructuralContent(
-                content_type="section_text",
+                content_type=StructuralContentTargetEnum.SECTION_TEXT,
                 path=list(section_entry["path"]),
                 path_text=" > ".join(section_entry["path"]),
                 text=f'{section_entry["section"]}\n\n' + "\n\n".join(section_entry["texts"]),
@@ -197,7 +198,7 @@ def _build_structural_content(
                 metadata_json={
                     "source_mode": "markdown",
                     "source_path": source_path,
-                    "content_type": "section_text",
+                    "content_type": StructuralContentTargetEnum.SECTION_TEXT.value,
                     "section_title": section_entry["section_title"],
                 },
             )
@@ -208,7 +209,7 @@ def _build_structural_content(
         lines.extend(str(section["section"]) for section in subpart_entry["sections"])
         structural_items.append(
             StructuralContent(
-                content_type="subpart_outline",
+                content_type=StructuralContentTargetEnum.SUBPART_OUTLINE,
                 path=list(subpart_entry["path"]),
                 path_text=" > ".join(subpart_entry["path"]),
                 text=_join_outline_lines(lines),
@@ -221,7 +222,7 @@ def _build_structural_content(
                 metadata_json={
                     "source_mode": "markdown",
                     "source_path": source_path,
-                    "content_type": "subpart_outline",
+                    "content_type": StructuralContentTargetEnum.SUBPART_OUTLINE.value,
                     "sections": subpart_entry["sections"],
                 },
             )
@@ -241,7 +242,7 @@ def _build_structural_content(
 
         structural_items.append(
             StructuralContent(
-                content_type="part_outline",
+                content_type=StructuralContentTargetEnum.PART_OUTLINE,
                 path=list(part_entry["path"]),
                 path_text=" > ".join(part_entry["path"]),
                 text=_join_outline_lines(lines),
@@ -254,7 +255,7 @@ def _build_structural_content(
                 metadata_json={
                     "source_mode": "markdown",
                     "source_path": source_path,
-                    "content_type": "part_outline",
+                    "content_type": StructuralContentTargetEnum.PART_OUTLINE.value,
                     "direct_sections": part_entry["direct_sections"],
                     "subparts": list(part_entry["subparts"].values()),
                 },

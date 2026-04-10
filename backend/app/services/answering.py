@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.schemas.planning import ResearchDecision
 from app.schemas.retrieval import RetrievalEvidence
-from app.schemas.types import QueryIntent
+from app.schemas.types import QueryIntentEnum
 from app.services.answering_components.decision_functions import (
     DECIDE_RESEARCH_STATUS_FUNCTION_NAME,
     build_research_decision_functions,
@@ -44,7 +44,7 @@ class FunctionAgentResult:
     """Result of a retrieval function-calling run."""
 
     answer: str
-    intent: QueryIntent
+    intent: QueryIntentEnum
     evidence: list[RetrievalEvidence]
     retrieval_rounds: int
     debug_rounds: list[dict[str, object]]
@@ -181,7 +181,7 @@ class AnsweringService:
                 )
 
         forced_decision = latest_decision or ResearchDecision(
-            intent="general",
+            intent=QueryIntentEnum.GENERAL,
             wants_raw_structure=False,
             continue_retrieval=False,
             rationale="Maximum retrieval rounds reached.",

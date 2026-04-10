@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.schemas.types import QueryIntent
+from app.schemas.types import QueryIntentEnum
 
 
 class QuoteSpan(BaseModel):
@@ -46,6 +46,6 @@ class ChatQueryResponse(BaseModel):
     answer: str
     quotes: list[QuoteSpan] = Field(default_factory=list)
     sources: list[SourceItem] = Field(default_factory=list)
-    intent: QueryIntent
+    intent: QueryIntentEnum
     retrieval_rounds: int
     debug: dict[str, Any] | None = None

@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.schemas.types import RetrievalMode, StructuralContentTarget
+from app.schemas.types import RetrievalModeEnum, StructuralContentTargetEnum
 
 
 class StructuralFilters(BaseModel):
@@ -29,7 +29,7 @@ class RetrievalEvidence(BaseModel):
     part: str | None = None
     subpart: str | None = None
     markers: list[str] = Field(default_factory=list)
-    retrieval_mode: RetrievalMode
+    retrieval_mode: RetrievalModeEnum
     score: float
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -40,13 +40,13 @@ class SearchRequest(BaseModel):
     query_text: str = Field(min_length=1)
     limit: int = Field(default=10, ge=1, le=100)
     filters: StructuralFilters | None = None
-    structure_target: StructuralContentTarget | None = None
+    structure_target: StructuralContentTargetEnum | None = None
 
 
 class SearchResponse(BaseModel):
     """Response shape for admin retrieval debugging endpoints."""
 
-    mode: RetrievalMode
+    mode: RetrievalModeEnum
     query_text: str
     limit: int
     filters: StructuralFilters | None = None
