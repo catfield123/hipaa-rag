@@ -7,10 +7,8 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
 
 def _render_reference_label(item: dict) -> str:
+    # path_text already ends with the section trail; do not append markers (they duplicate the tail).
     label = item.get("path_text") or item.get("section") or item.get("part") or item.get("subpart") or "Unknown source"
-    markers = item.get("markers") or []
-    if markers:
-        return f"{label} {' '.join(markers)}"
     return str(label)
 
 
@@ -21,8 +19,8 @@ def _render_quotes(quotes: list[dict]) -> str:
         text = str(item.get("text", "")).strip()
         if not text:
             continue
-        blocks.append(f"### {label}\n\n{text}")
-    return "\n\n---\n\n".join(blocks)
+        blocks.append(f"**{label}**\n{text}")
+    return "\n\n".join(blocks)
 
 
 def _render_sources(sources: list[dict]) -> str:
