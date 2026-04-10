@@ -46,18 +46,13 @@ def build_retrieval_functions(*, default_limit: int) -> list[dict[str, Any]]:
     }
     return [
         _function_schema(
-            name="bm25_search",
-            description="Lexical search for exact wording, mentions, quotes, and literal checks.",
-            parameters=search_parameters,
-        ),
-        _function_schema(
             name="hybrid_search",
-            description="General-purpose retrieval combining lexical and semantic search.",
+            description="Default search for nearly all non-structural questions, especially permissions, requirements, obligations, disclosures, and exceptions.",
             parameters=search_parameters,
         ),
         _function_schema(
-            name="dense_search",
-            description="Vector-only semantic search for broader conceptual similarity.",
+            name="bm25_search",
+            description="Use only for exact wording, quotes, literal mentions, and explicit verification of whether a phrase appears.",
             parameters=search_parameters,
         ),
         _function_schema(

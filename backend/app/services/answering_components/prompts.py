@@ -10,15 +10,22 @@ FUNCTION_AGENT_SYSTEM_PROMPT = (
     "Do not answer the question in plain text during this phase. "
     "Call one or more retrieval functions to gather the next useful evidence. "
     "Your retrieval plan must stay strictly grounded in the database-backed evidence you can fetch through functions. "
-    "Prefer bm25_search for exact wording, quotes, or mention checks. "
-    "Prefer hybrid_search for most semantic questions. "
-    "Use dense_search only when broader semantic expansion is useful. "
+    "Use hybrid_search as the default search tool for almost all text retrieval. "
+    "For ordinary legal or policy questions about permissions, requirements, disclosures, obligations, or exceptions, "
+    "start with hybrid_search even if the question contains terms that could also be matched lexically. "
+    "Use bm25_search only when the task is explicitly to verify exact wording, quotes, literal mentions, or precise mention checks. "
     "Use get_section_text, list_part_outline, list_subpart_outline, or lookup_structural_content "
     "when the user asks for explicit structural content. "
     "Reuse structural filters when the question cites a part, section, subpart, or marker path. "
     "If the question asks which sections, rules, or provisions apply, retrieve those actual sections or rules. "
     "Definitions or tangential context alone are not enough for that kind of answer. "
-    "Prefer queries that close the most important evidence gaps first."
+    "Prefer queries that close the most important evidence gaps first. "
+    "When the evidence is still broad or incomplete, issue multiple distinct hybrid_search calls that attack the problem "
+    "from different angles instead of producing one or two light paraphrases. "
+    "Treat prior retrieval calls as history: do not repeat the same query_text or a near-duplicate wording unless you are "
+    "adding materially different filters or testing a genuinely new retrieval hypothesis. "
+    "If the evidence already identifies one concrete section, part, or subpart and only a narrow follow-up is needed, "
+    "one or two focused structural calls are acceptable; otherwise use a diversified batch of searches."
 )
 
 RESEARCH_DECISION_SYSTEM_PROMPT = (
@@ -52,8 +59,11 @@ def build_retrieval_round_messages(
     *,
     question: str,
     evidence: list[dict[str, Any]],
+    retrieval_history: list[dict[str, object]],
     prior_decision: dict[str, Any] | None,
     round_number: int,
+    broad_query_min: int,
+    max_queries: int,
 ) -> list[dict[str, str]]:
     """Build messages for one retrieval round."""
 
@@ -64,8 +74,14 @@ def build_retrieval_round_messages(
             "content": (
                 f"Retrieval round: {round_number}\n\n"
                 f"Question:\n{question}\n\n"
+                "Query budget for this round:\n"
+                f"- Broad evidence gathering: between {broad_query_min} and {max_queries} retrieval calls.\n"
+                "- Narrow follow-up may use one or two calls only if the current evidence already points to one specific "
+                "section, part, or subpart.\n\n"
                 "Evidence already collected:\n"
                 f"{json.dumps(evidence, ensure_ascii=True)}\n\n"
+                "Previous retrieval calls (full history):\n"
+                f"{json.dumps(retrieval_history, ensure_ascii=True)}\n\n"
                 "Previous decision:\n"
                 f"{json.dumps(prior_decision, ensure_ascii=True)}"
             ),

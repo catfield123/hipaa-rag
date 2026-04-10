@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -85,16 +86,21 @@ class AnsweringService:
         retrieval_functions = build_retrieval_functions(default_limit=min(self.settings.retrieval_limit, 8))
 
         all_evidence: list[RetrievalEvidence] = []
+        retrieval_history: list[dict[str, object]] = []
         debug_rounds: list[dict[str, object]] = []
         retrieval_rounds = 0
         latest_decision: ResearchDecision | None = None
+        max_queries_per_round = max(1, self.settings.query_rewrite_limit)
 
         for round_number in range(1, self.settings.agent_max_rounds + 1):
             retrieval_messages = build_retrieval_round_messages(
                 question=question,
                 evidence=[item.model_dump() for item in all_evidence],
+                retrieval_history=retrieval_history,
                 prior_decision=latest_decision.model_dump() if latest_decision is not None else None,
                 round_number=round_number,
+                broad_query_min=min(3, max_queries_per_round),
+                max_queries=max_queries_per_round,
             )
             response = await self.client.chat.completions.create(
                 model=self.settings.openai_chat_model,
@@ -103,7 +109,11 @@ class AnsweringService:
                 tool_choice="required",
             )
             message = response.choices[0].message
-            function_calls = message.tool_calls or []
+            raw_function_calls = message.tool_calls or []
+            function_calls, skipped_function_calls = _prepare_function_calls(
+                raw_function_calls,
+                max_queries=max_queries_per_round,
+            )
             if not function_calls:
                 raise RuntimeError(
                     "Each retrieval round must contain at least one retrieval function call."
@@ -112,10 +122,16 @@ class AnsweringService:
             retrieval_rounds = round_number
             round_debug: dict[str, object] = {
                 "round": round_number,
+                "query_budget": max_queries_per_round,
+                "requested_function_call_count": len(raw_function_calls),
+                "executed_function_call_count": len(function_calls),
                 "function_calls": [],
             }
+            if skipped_function_calls:
+                round_debug["skipped_function_calls"] = skipped_function_calls
 
             for function_call in function_calls:
+                parsed_arguments = _safe_parse_arguments(function_call.function.arguments)
                 try:
                     execution = await function_executor.execute(
                         function_call.function.name,
@@ -125,11 +141,21 @@ class AnsweringService:
                     logger.exception("Function execution failed for %s", function_call.function.name)
                     execution_payload = {
                         "function_name": function_call.function.name,
+                        "function_args": parsed_arguments,
                         "error": str(exc),
                     }
                     cast_calls = round_debug["function_calls"]
                     assert isinstance(cast_calls, list)
                     cast_calls.append(execution_payload)
+                    retrieval_history.append(
+                        _build_retrieval_history_entry(
+                            round_number=round_number,
+                            function_name=function_call.function.name,
+                            function_args=parsed_arguments,
+                            result_count=0,
+                            error=str(exc),
+                        )
+                    )
                     continue
 
                 all_evidence = _merge_evidence(all_evidence, execution.evidence)
@@ -141,6 +167,14 @@ class AnsweringService:
                         "function_args": execution.function_args,
                         "result_count": len(execution.evidence),
                     }
+                )
+                retrieval_history.append(
+                    _build_retrieval_history_entry(
+                        round_number=round_number,
+                        function_name=execution.function_name,
+                        function_args=execution.function_args,
+                        result_count=len(execution.evidence),
+                    )
                 )
 
             latest_decision = await self._decide_next_step(
@@ -256,3 +290,113 @@ def _merge_evidence(
         seen_chunk_ids.add(item.chunk_id)
         merged.append(item)
     return merged
+
+
+def _prepare_function_calls(
+    function_calls: list[Any],
+    *,
+    max_queries: int,
+) -> tuple[list[Any], list[dict[str, object]]]:
+    """Drop exact duplicate calls and cap each round to the configured query budget."""
+
+    prepared_calls: list[Any] = []
+    skipped_calls: list[dict[str, object]] = []
+    seen_keys: set[str] = set()
+
+    for function_call in function_calls:
+        function_name = function_call.function.name
+        parsed_arguments = _safe_parse_arguments(function_call.function.arguments)
+        call_key = _build_function_call_key(
+            function_name=function_name,
+            function_args=parsed_arguments,
+        )
+        if call_key in seen_keys:
+            skipped_calls.append(
+                {
+                    "function_name": function_name,
+                    "function_args": parsed_arguments,
+                    "reason": "duplicate_exact_call",
+                }
+            )
+            continue
+        if len(prepared_calls) >= max_queries:
+            skipped_calls.append(
+                {
+                    "function_name": function_name,
+                    "function_args": parsed_arguments,
+                    "reason": "over_query_budget",
+                }
+            )
+            continue
+        seen_keys.add(call_key)
+        prepared_calls.append(function_call)
+
+    return prepared_calls, skipped_calls
+
+
+def _build_function_call_key(*, function_name: str, function_args: dict[str, Any]) -> str:
+    """Return a stable dedupe key for one retrieval function call."""
+
+    normalized_args = _normalize_payload(function_args)
+    return json.dumps(
+        {"function_name": function_name, "function_args": normalized_args},
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+
+
+def _build_retrieval_history_entry(
+    *,
+    round_number: int,
+    function_name: str,
+    function_args: dict[str, Any],
+    result_count: int,
+    error: str | None = None,
+) -> dict[str, object]:
+    """Serialize one retrieval call into compact prompt-friendly history."""
+
+    entry: dict[str, object] = {
+        "round": round_number,
+        "function_name": function_name,
+        "result_count": result_count,
+    }
+    for key in (
+        "query_text",
+        "filters",
+        "target",
+        "section_number",
+        "part_number",
+        "subpart",
+    ):
+        value = function_args.get(key)
+        if value not in (None, "", [], {}):
+            entry[key] = value
+    if error is not None:
+        entry["error"] = error
+    return entry
+
+
+def _safe_parse_arguments(raw_arguments: str) -> dict[str, Any]:
+    """Best-effort JSON parser for tool-call arguments."""
+
+    try:
+        parsed = json.loads(raw_arguments or "{}")
+    except json.JSONDecodeError:
+        return {"_raw_arguments": raw_arguments}
+    return parsed if isinstance(parsed, dict) else {"_raw_arguments": raw_arguments}
+
+
+def _normalize_payload(value: Any) -> Any:
+    """Normalize payload values so exact duplicate retrieval calls collapse cleanly."""
+
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_payload(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, list):
+        return [_normalize_payload(item) for item in value]
+    if isinstance(value, str):
+        normalized = " ".join(value.split())
+        return normalized.casefold() if normalized else normalized
+    return value
