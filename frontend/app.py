@@ -7,6 +7,32 @@ import requests
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
 
+def _render_reference_label(item: dict) -> str:
+    label = item.get("path_text") or item.get("section") or item.get("part") or item.get("subpart") or "Unknown source"
+    markers = item.get("markers") or []
+    if markers:
+        return f"{label} {' '.join(markers)}"
+    return str(label)
+
+
+def _render_quotes(quotes: list[dict]) -> str:
+    rendered: list[str] = []
+    for item in quotes:
+        label = _render_reference_label(item)
+        text = str(item.get("text", "")).strip()
+        if not text:
+            continue
+        rendered.append(f'- "{text}" ({label})')
+    return "Quotes:\n" + "\n".join(rendered)
+
+
+def _render_sources(sources: list[dict]) -> str:
+    rendered: list[str] = []
+    for item in sources:
+        rendered.append(f"- {_render_reference_label(item)}")
+    return "Sources:\n" + "\n".join(rendered)
+
+
 def ask_hipaa(question: str, history: list[list[str]], include_debug: bool) -> tuple[list[list[str]], str, str]:
     history = history or []
     question = question.strip()
@@ -27,15 +53,9 @@ def ask_hipaa(question: str, history: list[list[str]], include_debug: bool) -> t
 
         extras: list[str] = []
         if quotes:
-            extras.append("Quotes:\n" + "\n".join(
-                f'- "{item["text"]}" ({item["source_label"]}, pages {item["page_start"]}-{item["page_end"]})'
-                for item in quotes
-            ))
+            extras.append(_render_quotes(quotes))
         if sources:
-            extras.append("Sources:\n" + "\n".join(
-                f'- {item["source_label"]} (pages {item["page_start"]}-{item["page_end"]})'
-                for item in sources
-            ))
+            extras.append(_render_sources(sources))
         if include_debug and data.get("debug"):
             extras.append(f"Debug:\n```json\n{json.dumps(data['debug'], indent=2)}\n```")
 
