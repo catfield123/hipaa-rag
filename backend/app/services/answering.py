@@ -1,4 +1,4 @@
-"""Facade service for query planning, evidence assessment, and answer synthesis."""
+"""Facade service over the function-calling answering agent."""
 
 from __future__ import annotations
 
@@ -6,31 +6,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.services.answering_components import (
-    QuestionStructureAnalyzer,
+    FunctionAgentResult,
+    FunctionCallingAnsweringAgent,
     QuestionStructureParser,
-    ToolAgentResult,
-    ToolDrivenAnsweringAgent,
 )
 from app.services.openai_client import get_openai_client
 from app.services.retrieval_components import BM25Service, DenseRetriever, HybridRetriever, StructuralContentRetriever
 
 
 class AnsweringService:
-    """Facade over the tool-driven answering agent."""
+    """Facade over the function-calling answering agent."""
 
     def __init__(self) -> None:
         self.settings = get_settings()
         self.client = get_openai_client()
         self.structure_parser = QuestionStructureParser()
-        self.structure_analyzer = QuestionStructureAnalyzer(
+        self.function_agent = FunctionCallingAnsweringAgent(
             settings=self.settings,
             client=self.client,
-            parser=self.structure_parser,
-        )
-        self.tool_agent = ToolDrivenAnsweringAgent(
-            settings=self.settings,
-            client=self.client,
-            structure_analyzer=self.structure_analyzer,
+            structure_parser=self.structure_parser,
         )
 
     async def answer_question(
@@ -42,10 +36,10 @@ class AnsweringService:
         dense_retriever: DenseRetriever,
         hybrid_retriever: HybridRetriever,
         structural_retriever: StructuralContentRetriever,
-    ) -> ToolAgentResult:
-        """Answer a question through LLM-selected retrieval tools."""
+    ) -> FunctionAgentResult:
+        """Answer a question through LLM-selected retrieval functions."""
 
-        return await self.tool_agent.answer_question(
+        return await self.function_agent.answer_question(
             question=question,
             session=session,
             bm25_service=bm25_service,

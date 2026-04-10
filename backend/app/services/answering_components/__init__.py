@@ -1,16 +1,17 @@
 """Composable answer-planning and answer-synthesis components."""
 
+from app.services.answering_components.decision import ResearchDecision
 from app.services.answering_components.structure import (
-    QuestionStructureAnalysis,
-    QuestionStructureAnalyzer,
     QuestionStructureParser,
 )
-from app.services.answering_components.tool_agent import ToolAgentResult, ToolDrivenAnsweringAgent
+from app.services.answering_components.function_agent import (
+    FunctionAgentResult,
+    FunctionCallingAnsweringAgent,
+)
 
 __all__ = [
-    "QuestionStructureAnalysis",
-    "QuestionStructureAnalyzer",
+    "ResearchDecision",
     "QuestionStructureParser",
-    "ToolAgentResult",
-    "ToolDrivenAnsweringAgent",
+    "FunctionAgentResult",
+    "FunctionCallingAnsweringAgent",
 ]

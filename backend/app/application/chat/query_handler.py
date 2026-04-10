@@ -1,4 +1,4 @@
-"""Chat use case orchestration for tool-driven retrieval and answering."""
+"""Chat use case orchestration for function-calling retrieval and answering."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from app.services.retrieval_components.dependencies import (
 
 
 class ChatQueryHandler:
-    """Coordinate tool-driven retrieval and final response shaping."""
+    """Coordinate function-calling retrieval and final response shaping."""
 
     def __init__(
         self,
@@ -36,6 +36,7 @@ class ChatQueryHandler:
     ) -> None:
         self.settings = settings or get_settings()
         self.answering_service = answering_service or AnsweringService()
+        # Retrieval components are cached providers; inject individually to keep dependencies explicit.
         self.bm25_service = bm25_service or get_bm25_service()
         self.dense_retriever = dense_retriever or get_dense_retriever()
         self.hybrid_retriever = hybrid_retriever or get_hybrid_retriever()
@@ -48,7 +49,7 @@ class ChatQueryHandler:
         include_debug: bool,
         session: AsyncSession,
     ) -> ChatQueryResponse:
-        """Run the tool-driven chat workflow and return the API response payload."""
+        """Run the function-calling chat workflow and return the API response payload."""
 
         outcome = await self.answering_service.answer_question(
             question=question,

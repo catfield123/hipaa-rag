@@ -22,7 +22,10 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 Bm25ServiceDep = Annotated[BM25Service, Depends(get_bm25_service)]
 DenseRetrieverDep = Annotated[DenseRetriever, Depends(get_dense_retriever)]
 HybridRetrieverDep = Annotated[HybridRetriever, Depends(get_hybrid_retriever)]
-StructuralRetrieverDep = Annotated[StructuralContentRetriever, Depends(get_structural_content_retriever)]
+StructuralRetrieverDep = Annotated[
+    StructuralContentRetriever,
+    Depends(get_structural_content_retriever),
+]
 
 
 @router.get("/health")
