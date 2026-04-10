@@ -41,9 +41,9 @@ class ChunkAtom:
 class RetrievalChunker:
     def __init__(
         self,
-        min_tokens: int = 120,
-        target_tokens: int = 450,
-        hard_cap_tokens: int = 850,
+        min_tokens: int = 30,
+        target_tokens: int = 140,
+        hard_cap_tokens: int = 220,
     ) -> None:
         self.min_tokens = min_tokens
         self.target_tokens = target_tokens
@@ -61,14 +61,11 @@ class RetrievalChunker:
             if not atoms:
                 continue
 
-            current_atoms: list[ChunkAtom] = []
             for atom in atoms:
-                if atom.token_count > self.hard_cap_tokens:
-                    if current_atoms:
-                        chunks.append(self._build_chunk_record(section, current_atoms, nodes_by_key, chunk_counter))
-                        chunk_counter += 1
-                        current_atoms = []
-
+                # Keep chunking aligned to legal structure:
+                # one leaf node (paragraph/subparagraph/text) is one base chunk.
+                # Only split further when that node is itself too long.
+                if atom.token_count > self.target_tokens:
                     for start_char, end_char, text in self._split_large_text(atom.text):
                         content = normalize_text(text)
                         if not content:
@@ -101,50 +98,8 @@ class RetrievalChunker:
                         chunk_counter += 1
                     continue
 
-                if not current_atoms:
-                    current_atoms = [atom]
-                    continue
-
-                current_tokens = sum(item.token_count for item in current_atoms)
-                candidate_tokens = current_tokens + atom.token_count
-
-                if current_tokens < self.min_tokens:
-                    if candidate_tokens <= self.hard_cap_tokens:
-                        current_atoms.append(atom)
-                        continue
-                    chunks.append(self._build_chunk_record(section, current_atoms, nodes_by_key, chunk_counter))
-                    chunk_counter += 1
-                    current_atoms = [atom]
-                    continue
-
-                if candidate_tokens <= self.target_tokens:
-                    current_atoms.append(atom)
-                    continue
-
-                if candidate_tokens <= self.hard_cap_tokens and atom.token_count < self.min_tokens:
-                    current_atoms.append(atom)
-                    continue
-
-                chunks.append(self._build_chunk_record(section, current_atoms, nodes_by_key, chunk_counter))
+                chunks.append(self._build_chunk_record(section, [atom], nodes_by_key, chunk_counter))
                 chunk_counter += 1
-                current_atoms = [atom]
-
-            if current_atoms:
-                if chunks and sum(item.token_count for item in current_atoms) < self.min_tokens:
-                    last_chunk = chunks[-1]
-                    if (
-                        last_chunk.metadata.get("section_source_label") == section.source_label
-                        and last_chunk.token_count + sum(item.token_count for item in current_atoms) <= self.hard_cap_tokens
-                    ):
-                        merged_atoms = self._atoms_from_chunk_metadata(last_chunk, nodes_by_key)
-                        merged_atoms.extend(current_atoms)
-                        chunks[-1] = self._build_chunk_record(section, merged_atoms, nodes_by_key, last_chunk.chunk_index)
-                    else:
-                        chunks.append(self._build_chunk_record(section, current_atoms, nodes_by_key, chunk_counter))
-                        chunk_counter += 1
-                else:
-                    chunks.append(self._build_chunk_record(section, current_atoms, nodes_by_key, chunk_counter))
-                    chunk_counter += 1
 
         return chunks
 
@@ -176,7 +131,7 @@ class RetrievalChunker:
 
     def _split_large_text(self, text: str) -> list[tuple[int, int, str]]:
         normalized = normalize_text(text)
-        if estimate_token_count(normalized) <= self.hard_cap_tokens:
+        if estimate_token_count(normalized) <= self.target_tokens:
             return [(0, len(normalized), normalized)]
 
         paragraph_like_parts = [part.strip() for part in re.split(r"\n{2,}", normalized) if part.strip()]

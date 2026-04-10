@@ -5,11 +5,19 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class StructuralFilters(BaseModel):
+    part_number: str | None = None
+    section_number: str | None = None
+    subpart: str | None = None
+    marker_path: list[str] = Field(default_factory=list)
+
+
 class QueryVariant(BaseModel):
     text: str = Field(min_length=1)
     mode: Literal["bm25_only", "hybrid"]
     strategy: str
     reason: str
+    filters: StructuralFilters | None = None
 
 
 class AnswerConstraints(BaseModel):

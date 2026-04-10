@@ -7,13 +7,15 @@ from typing import Literal
 
 from pypdf import PdfReader
 
-from app.services.text_utils import marker_depth, normalize_line, normalize_text
+from app.services.text_utils import normalize_line, normalize_text
 
 
 SECTION_PATTERN = re.compile(r"^§\s*(\d+\.\d+)\s*(.*)$")
 PART_PATTERN = re.compile(r"^PART\s+(\d+)[—-](.+)$")
 SUBPART_PATTERN = re.compile(r"^SUBPART\s+([A-Z])[—-](.+)$")
 MARKER_PATTERN = re.compile(r"^\(([A-Za-z0-9ivxlcdmIVXLCDM]+)\)\s*(.*)$")
+INLINE_MARKER_SPLIT_PATTERN = re.compile(r"(?<![A-Za-z0-9])(?=\([A-Za-z0-9ivxlcdmIVXLCDM]+\)\s)")
+TOC_LEADER_PATTERN = re.compile(r"\.{4,}\s*\d+\s*$")
 
 
 @dataclass
@@ -177,7 +179,7 @@ class HIPAAPdfParser:
         if current_section is not None:
             nodes.extend(self._flush_section(current_section, current_subpart_key or current_part_key))
 
-        return ParsedDocument(nodes=nodes)
+        return ParsedDocument(nodes=self._deduplicate_sections(nodes))
 
     def _flush_section(self, section: ParsedSection, parent_key: str | None) -> list[ParsedNode]:
         section_key = self._next_key()
@@ -204,6 +206,7 @@ class HIPAAPdfParser:
             return nodes
 
         stack: list[tuple[int, ParsedNode]] = [(0, section_node)]
+        previous_depth = 0
         for block in logical_blocks:
             if block["marker"] is None:
                 raw_text = block["text"]
@@ -227,7 +230,7 @@ class HIPAAPdfParser:
                 )
                 continue
 
-            depth = marker_depth(block["marker"])
+            depth = self._marker_depth(str(block["marker"]), previous_depth)
             while stack and stack[-1][0] >= depth:
                 stack.pop()
 
@@ -250,6 +253,7 @@ class HIPAAPdfParser:
             )
             nodes.append(node)
             stack.append((depth, node))
+            previous_depth = depth
 
         return nodes
 
@@ -278,19 +282,21 @@ class HIPAAPdfParser:
             page_end = None
 
         for line in lines:
-            marker_match = MARKER_PATTERN.match(line.text)
-            if marker_match:
-                flush()
-                current_marker = f"({marker_match.group(1)})"
-                current_lines = [marker_match.group(2).strip()]
-                page_start = line.page_number
-                page_end = line.page_number
-                continue
+            segments = self._split_inline_markers(line.text)
+            for segment in segments:
+                marker_match = MARKER_PATTERN.match(segment)
+                if marker_match:
+                    flush()
+                    current_marker = f"({marker_match.group(1)})"
+                    current_lines = [marker_match.group(2).strip()]
+                    page_start = line.page_number
+                    page_end = line.page_number
+                    continue
 
-            if page_start is None:
-                page_start = line.page_number
-            page_end = line.page_number
-            current_lines.append(line.text)
+                if page_start is None:
+                    page_start = line.page_number
+                page_end = line.page_number
+                current_lines.append(segment)
 
         flush()
         return blocks
@@ -325,7 +331,7 @@ class HIPAAPdfParser:
 
             text = page.extract_text() or ""
             cleaned_lines = self._clean_page_lines(text)
-            if cleaned_lines:
+            if cleaned_lines and not self._looks_like_toc_page(cleaned_lines):
                 pages.append((index, cleaned_lines))
 
         return pages
@@ -350,6 +356,100 @@ class HIPAAPdfParser:
                 continue
             cleaned.append(line)
         return cleaned
+
+    def _split_inline_markers(self, text: str) -> list[str]:
+        normalized = normalize_text(text)
+        if not normalized:
+            return []
+        if MARKER_PATTERN.match(normalized):
+            return [normalized]
+        if "(" not in normalized or ")" not in normalized:
+            return [normalized]
+        parts = [part.strip() for part in INLINE_MARKER_SPLIT_PATTERN.split(normalized) if part.strip()]
+        return parts or [normalized]
+
+    def _looks_like_toc_page(self, lines: list[str]) -> bool:
+        if any("Table of Contents" in line for line in lines):
+            return True
+        toc_like_lines = sum(1 for line in lines if TOC_LEADER_PATTERN.search(line))
+        return toc_like_lines >= 5
+
+    def _build_children_map(self, nodes: list[ParsedNode]) -> dict[str, list[str]]:
+        children_by_parent: dict[str, list[str]] = {}
+        for node in nodes:
+            if node.parent_key is None:
+                continue
+            children_by_parent.setdefault(node.parent_key, []).append(node.key)
+        return children_by_parent
+
+    def _deduplicate_sections(self, nodes: list[ParsedNode]) -> list[ParsedNode]:
+        nodes_by_key = {node.key: node for node in nodes}
+        children_by_parent = self._build_children_map(nodes)
+        duplicate_groups: dict[str, list[ParsedNode]] = {}
+        for node in nodes:
+            if node.node_type == "section" and node.section_number:
+                duplicate_groups.setdefault(node.section_number, []).append(node)
+
+        keys_to_drop: set[str] = set()
+        for group in duplicate_groups.values():
+            if len(group) <= 1:
+                continue
+
+            scored = sorted(
+                group,
+                key=lambda node: (
+                    self._section_subtree_score(node.key, nodes_by_key, children_by_parent),
+                    node.page_start,
+                ),
+            )
+            keep = scored[-1].key
+            for candidate in group:
+                if candidate.key == keep:
+                    continue
+                keys_to_drop.update(self._collect_subtree_keys(candidate.key, children_by_parent))
+
+        return [node for node in nodes if node.key not in keys_to_drop]
+
+    def _section_subtree_score(
+        self,
+        section_key: str,
+        nodes_by_key: dict[str, ParsedNode],
+        children_by_parent: dict[str, list[str]],
+    ) -> tuple[int, int]:
+        subtree_keys = self._collect_subtree_keys(section_key, children_by_parent)
+        descendants = max(len(subtree_keys) - 1, 0)
+        total_text = sum(len(nodes_by_key[key].raw_text or "") for key in subtree_keys if key in nodes_by_key)
+        return descendants, total_text
+
+    def _collect_subtree_keys(
+        self,
+        node_key: str,
+        children_by_parent: dict[str, list[str]],
+    ) -> set[str]:
+        keys = {node_key}
+        for child_key in children_by_parent.get(node_key, []):
+            keys.update(self._collect_subtree_keys(child_key, children_by_parent))
+        return keys
+
+    def _marker_depth(self, marker: str, previous_depth: int) -> int:
+        cleaned = marker.strip("()")
+        if not cleaned:
+            return 0
+        if cleaned.isdigit():
+            return 2
+        if cleaned.isupper():
+            return 4
+        if cleaned.islower():
+            if re.fullmatch(r"[ivxlcdm]+", cleaned):
+                # Treat single-letter markers like (c) and (d) as alphabetical
+                # unless the surrounding sequence strongly suggests roman numerals.
+                if len(cleaned) > 1:
+                    return 3
+                if cleaned in {"i", "v", "x"} and previous_depth in {2, 3}:
+                    return 3
+                return 1
+            return 1
+        return 5
 
     def _next_key(self) -> str:
         self._node_counter += 1

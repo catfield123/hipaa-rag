@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import BM25CorpusStat, BM25Posting, BM25Term, RetrievalChunk
-from app.schemas import RetrievalEvidence
+from app.models import BM25CorpusStat, BM25Posting, BM25Term, DocumentNode, RetrievalChunk
+from app.schemas import RetrievalEvidence, StructuralFilters
 from app.services.text_utils import estimate_token_count, tokenize
 
 
@@ -81,6 +81,7 @@ class BM25Service:
         session: AsyncSession,
         query_text: str,
         limit: int,
+        filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
         query_terms = tokenize(query_text)
         if not query_terms:
@@ -100,13 +101,25 @@ class BM25Service:
 
         idf_map = {row.term: row.inverse_document_frequency for row in term_rows}
 
-        postings = (
-            await session.execute(
-                select(BM25Posting, RetrievalChunk)
-                .join(RetrievalChunk, RetrievalChunk.id == BM25Posting.chunk_id)
-                .where(BM25Posting.term.in_(idf_map.keys()))
-            )
-        ).all()
+        query = (
+            select(BM25Posting, RetrievalChunk)
+            .join(RetrievalChunk, RetrievalChunk.id == BM25Posting.chunk_id)
+            .join(DocumentNode, DocumentNode.id == RetrievalChunk.start_node_id)
+            .where(BM25Posting.term.in_(idf_map.keys()))
+        )
+
+        if filters:
+            if filters.part_number:
+                query = query.where(DocumentNode.part_number == filters.part_number)
+            if filters.section_number:
+                query = query.where(DocumentNode.section_number == filters.section_number)
+            if filters.subpart:
+                query = query.where(DocumentNode.subpart == filters.subpart.upper())
+            if filters.marker_path:
+                marker = f"({filters.marker_path[-1]})"
+                query = query.where(DocumentNode.marker == marker)
+
+        postings = (await session.execute(query)).all()
 
         scores: dict[int, float] = defaultdict(float)
         chunk_map: dict[int, RetrievalChunk] = {}

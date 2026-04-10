@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from app.config import get_settings
-from app.schemas import EvidenceDecision, QueryPlan, QueryVariant, RetrievalEvidence
+from app.schemas import EvidenceDecision, QueryPlan, QueryVariant, RetrievalEvidence, StructuralFilters
 from app.services.openai_client import get_openai_client
 from app.services.text_utils import tokenize, unique_preserve_order
 
@@ -36,6 +36,12 @@ class AnsweringService:
                 "allowed_modes": ["bm25_only", "hybrid"],
                 "bm25_is_required_for_literal_or_mention_queries": True,
                 "drop_corpus_obvious_terms_like_hipaa": True,
+                "optional_structural_filters": {
+                    "part_number": "string | null",
+                    "section_number": "string | null",
+                    "subpart": "string | null",
+                    "marker_path": ["string"],
+                },
             },
         }
 
@@ -46,7 +52,9 @@ class AnsweringService:
                     "You are a legal retrieval planner. Return JSON only. "
                     "Rewrite the user query into retrieval queries. "
                     "Choose bm25_only for literal or mention checks. "
-                    "Choose hybrid for semantic or multi-section questions."
+                    "Choose hybrid for semantic or multi-section questions. "
+                    "If the user asks about a specific part/section/subpart/paragraph, "
+                    "add filters to narrow retrieval."
                 ),
             },
             {
@@ -157,6 +165,7 @@ class AnsweringService:
         exact_query = cleaned if cleaned else user_query.strip()
         broad_query = " ".join(unique_preserve_order(keywords[:4])) or exact_query
         semantic_query = broad_query
+        inferred_filters = self._infer_structural_filters(user_query)
 
         lowered = user_query.lower()
         if any(word in lowered for word in ("does", "mention", "is there", "does hipaa")):
@@ -167,18 +176,21 @@ class AnsweringService:
                     mode="bm25_only",
                     strategy="bm25_exact",
                     reason="Check exact wording directly in the corpus.",
+                    filters=inferred_filters,
                 ),
                 QueryVariant(
                     text=broad_query,
                     mode="bm25_only",
                     strategy="bm25_broad",
                     reason="Check whether related literal terminology appears.",
+                    filters=inferred_filters,
                 ),
                 QueryVariant(
                     text=semantic_query,
                     mode="hybrid",
                     strategy="semantic_probe",
                     reason="Look for nearby concepts if wording differs.",
+                    filters=inferred_filters,
                 ),
             ]
             return QueryPlan(intent=intent, needs_exact_phrase_check=True, queries=queries)
@@ -191,12 +203,14 @@ class AnsweringService:
                     mode="bm25_only",
                     strategy="citation_literal",
                     reason="Literal regulation retrieval for quotes.",
+                    filters=inferred_filters,
                 ),
                 QueryVariant(
                     text=broad_query,
                     mode="hybrid",
                     strategy="semantic_support",
                     reason="Add surrounding semantic context.",
+                    filters=inferred_filters,
                 ),
             ]
             return QueryPlan(intent=intent, queries=queries)
@@ -207,15 +221,34 @@ class AnsweringService:
                 mode="bm25_only",
                 strategy="lexical_anchor",
                 reason="Anchor the query with literal regulatory terms.",
+                filters=inferred_filters,
             ),
             QueryVariant(
                 text=broad_query,
                 mode="hybrid",
                 strategy="semantic_expansion",
                 reason="Retrieve broader context and related sections.",
+                filters=inferred_filters,
             ),
         ]
         return QueryPlan(intent="general", queries=queries)
+
+    def _infer_structural_filters(self, user_query: str) -> StructuralFilters | None:
+        lowered = user_query.lower()
+        part_match = re.search(r"\bpart\s+(\d{3})\b", lowered, flags=re.IGNORECASE)
+        section_match = re.search(r"(?:§\s*)?(\d{3}\.\d+)", lowered, flags=re.IGNORECASE)
+        subpart_match = re.search(r"\bsubpart\s+([a-z])\b", lowered, flags=re.IGNORECASE)
+        marker_path = re.findall(r"\(([A-Za-z0-9ivxlcdmIVXLCDM]+)\)", user_query)
+
+        if not (part_match or section_match or subpart_match or marker_path):
+            return None
+
+        return StructuralFilters(
+            part_number=part_match.group(1) if part_match else None,
+            section_number=section_match.group(1) if section_match else None,
+            subpart=subpart_match.group(1).upper() if subpart_match else None,
+            marker_path=[marker.lower() for marker in marker_path],
+        )
 
     def _fallback_answer(
         self,

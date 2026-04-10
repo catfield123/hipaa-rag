@@ -61,11 +61,6 @@ def upgrade() -> None:
     op.create_index("ix_retrieval_chunks_start_node_id", "retrieval_chunks", ["start_node_id"])
     op.create_index("ix_retrieval_chunks_end_node_id", "retrieval_chunks", ["end_node_id"])
     op.create_index("ix_retrieval_chunks_source_label", "retrieval_chunks", ["source_label"])
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_retrieval_chunks_embedding_hnsw "
-        "ON retrieval_chunks USING hnsw (embedding vector_cosine_ops)"
-    )
-
     op.create_table(
         "bm25_terms",
         sa.Column("term", sa.String(length=128), primary_key=True),
@@ -98,7 +93,6 @@ def downgrade() -> None:
     op.drop_index("ix_bm25_postings_term", table_name="bm25_postings")
     op.drop_table("bm25_postings")
     op.drop_table("bm25_terms")
-    op.execute("DROP INDEX IF EXISTS ix_retrieval_chunks_embedding_hnsw")
     op.drop_index("ix_retrieval_chunks_source_label", table_name="retrieval_chunks")
     op.drop_index("ix_retrieval_chunks_end_node_id", table_name="retrieval_chunks")
     op.drop_index("ix_retrieval_chunks_start_node_id", table_name="retrieval_chunks")

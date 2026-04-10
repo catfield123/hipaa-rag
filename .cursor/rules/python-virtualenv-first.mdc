@@ -1,0 +1,13 @@
+---
+description: Use a Python virtual environment before running project code
+alwaysApply: true
+---
+
+# Python Virtual Environment First
+
+- Before running Python code or Python CLI tools for this project, prefer an existing virtual environment.
+- Check for common local environments in this order: `.venv`, `venv`, `env`.
+- If none exists and Python commands are needed, create `.venv` with `python3 -m venv .venv`.
+- Activate the environment before running Python-related commands such as `python`, `pip`, `pytest`, `alembic`, or project scripts.
+- Prefer invoking tools through the activated environment rather than the system Python.
+- If the task is Docker-only and does not require local Python execution, a virtual environment is not required.

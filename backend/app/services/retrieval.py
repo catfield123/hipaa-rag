@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models import DocumentNode, RetrievalChunk
-from app.schemas import QueryPlan, RetrievalEvidence
+from app.schemas import QueryPlan, RetrievalEvidence, StructuralFilters
 from app.services.bm25 import BM25Service
 from app.services.embeddings import EmbeddingService
 from app.services.text_utils import unique_preserve_order
@@ -31,12 +31,14 @@ class RetrievalService:
                     session=session,
                     query_text=variant.text,
                     limit=self.settings.bm25_limit,
+                    filters=variant.filters,
                 )
             else:
                 evidence = await self.hybrid_search(
                     session=session,
                     query_text=variant.text,
                     limit=self.settings.retrieval_limit,
+                    filters=variant.filters,
                 )
             evidence_sets.append(evidence)
 
@@ -47,11 +49,13 @@ class RetrievalService:
         session: AsyncSession,
         query_text: str,
         limit: int,
+        filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
         bm25_hits = await self.bm25_service.search(
             session=session,
             query_text=query_text,
             limit=self.settings.bm25_limit,
+            filters=filters,
         )
         if not self.settings.openai_api_key:
             return bm25_hits[:limit]
@@ -59,6 +63,7 @@ class RetrievalService:
             session=session,
             query_text=query_text,
             limit=self.settings.dense_limit,
+            filters=filters,
         )
         return self._rrf_fuse([bm25_hits, dense_hits], limit=limit)
 
@@ -67,17 +72,26 @@ class RetrievalService:
         session: AsyncSession,
         query_text: str,
         limit: int,
+        filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
         query_embedding = await self.embedding_service.embed_query(query_text)
         distance = RetrievalChunk.embedding.cosine_distance(query_embedding)
-        rows = (
-            await session.execute(
-                select(RetrievalChunk, distance.label("distance"))
-                .where(RetrievalChunk.embedding.is_not(None))
-                .order_by(distance)
-                .limit(limit)
-            )
-        ).all()
+        query = (
+            select(RetrievalChunk, distance.label("distance"))
+            .join(DocumentNode, DocumentNode.id == RetrievalChunk.start_node_id)
+            .where(RetrievalChunk.embedding.is_not(None))
+        )
+        if filters:
+            if filters.part_number:
+                query = query.where(DocumentNode.part_number == filters.part_number)
+            if filters.section_number:
+                query = query.where(DocumentNode.section_number == filters.section_number)
+            if filters.subpart:
+                query = query.where(DocumentNode.subpart == filters.subpart.upper())
+            if filters.marker_path:
+                marker = f"({filters.marker_path[-1]})"
+                query = query.where(DocumentNode.marker == marker)
+        rows = (await session.execute(query.order_by(distance).limit(limit))).all()
 
         return [
             RetrievalEvidence(
