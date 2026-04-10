@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: hipaa_rag_backend
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: hipaa_rag_frontend
+    restart: unless-stopped
+    environment:
+      - BACKEND_URL=${BACKEND_URL:-http://nginx/api}
+    ports:
+     - "7860:7860"
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: hipaa_rag_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: hipaa_rag_ngrok
+    restart: unless-stopped
+    command: http --domain=${NGROK_DOMAIN} nginx:80
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    depends_on:
+      - nginx
+    ports:
+      - "4040:4040"
