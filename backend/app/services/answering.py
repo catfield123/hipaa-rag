@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -11,11 +10,13 @@ from typing import Any
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.string_templates import rag_agent
 from app.config import Settings, get_settings
 from app.core.exceptions import ConfigurationError
 from app.schemas.planning import ResearchDecision
 from app.schemas.retrieval import RetrievalEvidence
-from app.schemas.types import QueryIntentEnum
+from app.schemas.types import AgentPipelinePhaseEnum, QueryIntentEnum, RagWsEventType
+from app.services.answering_components import agent_utils
 from app.services.answering_components.decision_functions import (
     DECIDE_RESEARCH_STATUS_FUNCTION_NAME,
     build_research_decision_functions,
@@ -37,56 +38,10 @@ from app.services.retrieval_components import (
     HybridRetriever,
     StructuralContentRetriever,
 )
-
 logger = logging.getLogger(__name__)
 
 AgentStatusEmitter = Callable[[dict[str, Any]], Awaitable[None]]
 AgentAnswerDeltaEmitter = Callable[[str], Awaitable[None]]
-
-_TOOL_LABELS: dict[str, str] = {
-    "hybrid_search": "hybrid search",
-    "bm25_search": "keyword match (BM25)",
-    "lookup_structural_content": "structural content",
-    "get_section_text": "section text",
-    "list_part_outline": "part outline",
-    "list_subpart_outline": "subpart outline",
-}
-
-
-def _tool_label(function_name: str) -> str:
-    """Map internal tool names to short user-facing labels for status messages.
-
-    Args:
-        function_name (str): OpenAI tool name (e.g. ``hybrid_search``).
-
-    Returns:
-        str: Human-readable label, or ``function_name`` if unknown.
-
-    Raises:
-        None
-    """
-
-    return _TOOL_LABELS.get(function_name, function_name)
-
-
-def _truncate_text(text: str, *, limit: int = 280) -> str:
-    """Collapse whitespace and truncate a string for compact status lines.
-
-    Args:
-        text (str): Arbitrary text (e.g. model rationale).
-        limit (int): Maximum grapheme length before appending an ellipsis.
-
-    Returns:
-        str: Single-line truncated string.
-
-    Raises:
-        None
-    """
-
-    collapsed = " ".join(text.split())
-    if len(collapsed) <= limit:
-        return collapsed
-    return collapsed[: limit - 1] + "…"
 
 
 @dataclass(slots=True)
@@ -168,7 +123,7 @@ class AnsweringService:
 
         async def emit(
             *,
-            phase: str,
+            phase: AgentPipelinePhaseEnum,
             message: str,
             round_number: int | None = None,
             tool: str | None = None,
@@ -176,7 +131,7 @@ class AnsweringService:
             """Send one ``type: status`` payload through ``on_status`` when configured.
 
             Args:
-                phase (str): Pipeline phase (e.g. ``start``, ``plan``, ``retrieve``, ``decide``, ``answer``).
+                phase (AgentPipelinePhaseEnum): Pipeline step.
                 message (str): User-visible status line.
                 round_number (int | None): Retrieval round index, or ``None`` when not applicable.
                 tool (str | None): Active tool name during ``retrieve``, or ``None``.
@@ -191,7 +146,7 @@ class AnsweringService:
             if on_status is None:
                 return
             payload: dict[str, Any] = {
-                "type": "status",
+                "type": RagWsEventType.STATUS,
                 "phase": phase,
                 "message": message,
             }
@@ -202,8 +157,8 @@ class AnsweringService:
             await on_status(payload)
 
         await emit(
-            phase="start",
-            message="Preparing the agent and HIPAA knowledge-base search…",
+            phase=AgentPipelinePhaseEnum.START,
+            message=rag_agent.AGENT_STATUS_PREPARING,
         )
         function_executor = RetrievalFunctionExecutor(
             session=session,
@@ -223,10 +178,11 @@ class AnsweringService:
 
         for round_number in range(1, max_rounds + 1):
             await emit(
-                phase="plan",
+                phase=AgentPipelinePhaseEnum.PLAN,
                 round_number=round_number,
-                message=(
-                    f"Round {round_number} of {max_rounds}: choosing retrieval tool queries…"
+                message=rag_agent.AGENT_STATUS_ROUND_PLAN.format(
+                    round_number=round_number,
+                    max_rounds=max_rounds,
                 ),
             )
             retrieval_messages = build_retrieval_round_messages(
@@ -246,26 +202,30 @@ class AnsweringService:
             )
             message = response.choices[0].message
             raw_function_calls = message.tool_calls or []
-            function_calls, _ = _prepare_function_calls(
+            function_calls, _ = agent_utils.prepare_retrieval_tool_calls(
                 raw_function_calls,
                 max_queries=max_queries_per_round,
             )
             if not function_calls:
-                raise RuntimeError(
-                    "Each retrieval round must contain at least one retrieval function call."
-                )
+                raise RuntimeError(rag_agent.RUNTIME_RETRIEVAL_ROUND_REQUIRES_TOOLS)
 
             retrieval_rounds = round_number
 
             for function_call in function_calls:
-                parsed_arguments = _safe_parse_arguments(function_call.function.arguments)
+                parsed_arguments = agent_utils.parse_tool_call_json_arguments(
+                    function_call.function.arguments,
+                )
                 tool_name = function_call.function.name
                 await emit(
-                    phase="retrieve",
+                    phase=AgentPipelinePhaseEnum.RETRIEVE,
                     round_number=round_number,
                     tool=tool_name,
-                    message=(
-                        f"Round {round_number}: retrieving — {_tool_label(tool_name)}…"
+                    message=rag_agent.AGENT_STATUS_RETRIEVING.format(
+                        round_number=round_number,
+                        tool_label=rag_agent.AGENT_TOOL_LABELS.get(
+                            tool_name,
+                            tool_name,
+                        ),
                     ),
                 )
                 try:
@@ -276,7 +236,7 @@ class AnsweringService:
                 except Exception as exc:
                     logger.exception("Function execution failed for %s", function_call.function.name)
                     retrieval_history.append(
-                        _build_retrieval_history_entry(
+                        agent_utils.build_retrieval_history_entry(
                             round_number=round_number,
                             function_name=function_call.function.name,
                             function_args=parsed_arguments,
@@ -286,9 +246,12 @@ class AnsweringService:
                     )
                     continue
 
-                all_evidence = _merge_evidence(all_evidence, execution.evidence)
+                all_evidence = agent_utils.merge_evidence_by_chunk_id(
+                    all_evidence,
+                    execution.evidence,
+                )
                 retrieval_history.append(
-                    _build_retrieval_history_entry(
+                    agent_utils.build_retrieval_history_entry(
                         round_number=round_number,
                         function_name=execution.function_name,
                         function_args=execution.function_args,
@@ -297,9 +260,11 @@ class AnsweringService:
                 )
 
             await emit(
-                phase="decide",
+                phase=AgentPipelinePhaseEnum.DECIDE,
                 round_number=round_number,
-                message=f"Round {round_number}: checking whether evidence is sufficient…",
+                message=rag_agent.AGENT_STATUS_DECIDE_CHECK.format(
+                    round_number=round_number,
+                ),
             )
             latest_decision = await self._decide_next_step(
                 question=question,
@@ -309,8 +274,8 @@ class AnsweringService:
 
             if not latest_decision.continue_retrieval:
                 await emit(
-                    phase="answer",
-                    message="Generating the final answer from retrieved sources…",
+                    phase=AgentPipelinePhaseEnum.ANSWER,
+                    message=rag_agent.AGENT_STATUS_GENERATING_FINAL,
                 )
                 answer = await self._generate_final_answer(
                     question=question,
@@ -325,27 +290,27 @@ class AnsweringService:
                     retrieval_rounds=retrieval_rounds,
                 )
 
-            rationale_snippet = _truncate_text(latest_decision.rationale)
+            rationale_snippet = agent_utils.truncate_status_line(latest_decision.rationale)
             await emit(
-                phase="decide",
+                phase=AgentPipelinePhaseEnum.DECIDE,
                 round_number=round_number,
-                message=(
-                    f"Round {round_number}: more sources needed. "
-                    f"Rationale: {rationale_snippet}"
+                message=rag_agent.AGENT_STATUS_MORE_SOURCES.format(
+                    round_number=round_number,
+                    rationale=rationale_snippet,
                 ),
             )
 
         await emit(
-            phase="answer",
-            message=(
-                f"Retrieval round limit reached ({max_rounds}). Generating an answer from available sources…"
+            phase=AgentPipelinePhaseEnum.ANSWER,
+            message=rag_agent.AGENT_STATUS_LIMIT_REACHED.format(
+                max_rounds=max_rounds,
             ),
         )
         forced_decision = latest_decision or ResearchDecision(
             intent=QueryIntentEnum.GENERAL,
             wants_raw_structure=False,
             continue_retrieval=False,
-            rationale="Maximum retrieval rounds reached.",
+            rationale=rag_agent.RESEARCH_DECISION_RATIONALE_MAX_ROUNDS,
             missing_information=[],
         )
         answer = await self._generate_final_answer(
@@ -376,7 +341,7 @@ class AnsweringService:
 
         if not self.settings.openai_api_key:
             raise ConfigurationError(
-                "OPENAI_API_KEY is required because answering only supports the function-calling agent."
+                rag_agent.CONFIG_OPENAI_KEY_REQUIRED_FOR_AGENT,
             )
 
     async def _decide_next_step(
@@ -447,7 +412,7 @@ class AnsweringService:
             decision=decision.model_dump(),
             evidence=[item.model_dump() for item in evidence],
         )
-        fallback = "I could not produce a final answer from the retrieved evidence."
+        fallback = rag_agent.FINAL_ANSWER_EMPTY_FALLBACK
 
         if on_delta is None:
             response = await self.client.chat.completions.create(
@@ -473,196 +438,3 @@ class AnsweringService:
 
         text = "".join(parts).strip() or fallback
         return text
-
-
-def _merge_evidence(
-    existing: list[RetrievalEvidence],
-    new_items: list[RetrievalEvidence],
-) -> list[RetrievalEvidence]:
-    """Merge evidence lists, deduplicating by ``chunk_id`` while preserving first-seen order.
-
-    Args:
-        existing (list[RetrievalEvidence]): Prior rounds' evidence.
-        new_items (list[RetrievalEvidence]): New hits from the current round.
-
-    Returns:
-        list[RetrievalEvidence]: Combined list without duplicate chunk ids.
-
-    Raises:
-        None
-    """
-
-    merged: list[RetrievalEvidence] = []
-    seen_chunk_ids: set[int] = set()
-    for item in [*existing, *new_items]:
-        if item.chunk_id in seen_chunk_ids:
-            continue
-        seen_chunk_ids.add(item.chunk_id)
-        merged.append(item)
-    return merged
-
-
-def _prepare_function_calls(
-    function_calls: list[Any],
-    *,
-    max_queries: int,
-) -> tuple[list[Any], list[dict[str, object]]]:
-    """Deduplicate tool calls by normalized arguments and enforce a per-round call budget.
-
-    Args:
-        function_calls (list[Any]): Raw ``tool_calls`` entries from the chat completion.
-        max_queries (int): Maximum distinct calls to keep this round.
-
-    Returns:
-        tuple[list[Any], list[dict[str, object]]]: Kept call objects and skipped-call diagnostics.
-
-    Raises:
-        None
-    """
-
-    prepared_calls: list[Any] = []
-    skipped_calls: list[dict[str, object]] = []
-    seen_keys: set[str] = set()
-
-    for function_call in function_calls:
-        function_name = function_call.function.name
-        parsed_arguments = _safe_parse_arguments(function_call.function.arguments)
-        call_key = _build_function_call_key(
-            function_name=function_name,
-            function_args=parsed_arguments,
-        )
-        if call_key in seen_keys:
-            skipped_calls.append(
-                {
-                    "function_name": function_name,
-                    "function_args": parsed_arguments,
-                    "reason": "duplicate_exact_call",
-                }
-            )
-            continue
-        if len(prepared_calls) >= max_queries:
-            skipped_calls.append(
-                {
-                    "function_name": function_name,
-                    "function_args": parsed_arguments,
-                    "reason": "over_query_budget",
-                }
-            )
-            continue
-        seen_keys.add(call_key)
-        prepared_calls.append(function_call)
-
-    return prepared_calls, skipped_calls
-
-
-def _build_function_call_key(*, function_name: str, function_args: dict[str, Any]) -> str:
-    """Return a stable JSON key for deduplicating identical retrieval calls.
-
-    Args:
-        function_name (str): Tool name.
-        function_args (dict[str, Any]): Parsed arguments (after :func:`_safe_parse_arguments`).
-
-    Returns:
-        str: Canonical JSON string for set membership checks.
-
-    Raises:
-        None
-    """
-
-    normalized_args = _normalize_payload(function_args)
-    return json.dumps(
-        {"function_name": function_name, "function_args": normalized_args},
-        ensure_ascii=True,
-        sort_keys=True,
-    )
-
-
-def _build_retrieval_history_entry(
-    *,
-    round_number: int,
-    function_name: str,
-    function_args: dict[str, Any],
-    result_count: int,
-    error: str | None = None,
-) -> dict[str, object]:
-    """Serialize one retrieval tool invocation for inclusion in the next round's user prompt.
-
-    Args:
-        round_number (int): Round index when the call was made.
-        function_name (str): Tool name executed.
-        function_args (dict[str, Any]): Parsed arguments.
-        result_count (int): Number of evidence rows returned (``0`` on failure).
-        error (str | None): Error message when execution failed.
-
-    Returns:
-        dict[str, object]: Compact history dict (query fields omitted when empty).
-
-    Raises:
-        None
-    """
-
-    entry: dict[str, object] = {
-        "round": round_number,
-        "function_name": function_name,
-        "result_count": result_count,
-    }
-    for key in (
-        "query_text",
-        "filters",
-        "target",
-        "section_number",
-        "part_number",
-        "subpart",
-    ):
-        value = function_args.get(key)
-        if value not in (None, "", [], {}):
-            entry[key] = value
-    if error is not None:
-        entry["error"] = error
-    return entry
-
-
-def _safe_parse_arguments(raw_arguments: str) -> dict[str, Any]:
-    """Parse tool-call JSON; on failure return a dict capturing the raw string.
-
-    Args:
-        raw_arguments (str): JSON object string from the OpenAI tool call.
-
-    Returns:
-        dict[str, Any]: Parsed object, or ``{\"_raw_arguments\": ...}`` when JSON is invalid.
-
-    Raises:
-        None
-    """
-
-    try:
-        parsed = json.loads(raw_arguments or "{}")
-    except json.JSONDecodeError:
-        return {"_raw_arguments": raw_arguments}
-    return parsed if isinstance(parsed, dict) else {"_raw_arguments": raw_arguments}
-
-
-def _normalize_payload(value: Any) -> Any:
-    """Recursively normalize dict/list/string values for stable dedupe keys.
-
-    Args:
-        value (Any): Argument subtree from a tool call.
-
-    Returns:
-        Any: Structure with sorted dict keys, normalized strings (casefold, collapsed whitespace).
-
-    Raises:
-        None
-    """
-
-    if isinstance(value, dict):
-        return {
-            str(key): _normalize_payload(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
-        }
-    if isinstance(value, list):
-        return [_normalize_payload(item) for item in value]
-    if isinstance(value, str):
-        normalized = " ".join(value.split())
-        return normalized.casefold() if normalized else normalized
-    return value

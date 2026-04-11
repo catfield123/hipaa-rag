@@ -18,12 +18,12 @@ class QuoteSpan(BaseModel):
         json_schema_extra={
             "example": {
                 "chunk_id": 42,
-                "path": ["45 CFR Part 164", "Subpart C"],
-                "path_text": "45 CFR Part 164 › Subpart C",
+                "path": ["45 CFR Part 164", "Subpart C", "§ 164.312", "(a)", "(2)", "(iv)"],
+                "path_text": "45 CFR Part 164 › Subpart C > § 164.312 > (a) > (2) > (iv)",
                 "section": "§ 164.312",
                 "part": "164",
                 "subpart": "C",
-                "markers": ["164.312(a)(2)(iv)"],
+                "markers": ["(a)", "(2)", "(iv)"],
                 "text": "Implement a mechanism to encrypt and decrypt electronic protected health information.",
             }
         }
@@ -52,11 +52,11 @@ class SourceItem(BaseModel):
         json_schema_extra={
             "example": {
                 "chunk_id": 42,
-                "path_text": "45 CFR Part 164 › Subpart C",
+                "path_text": "45 CFR Part 164 › Subpart C > § 164.312 > (a) > (2) > (iv)",
                 "section": "§ 164.312",
                 "part": "164",
                 "subpart": "C",
-                "markers": ["164.312(a)(2)(iv)"],
+                "markers": ["(a)","(2)","(iv)"],
             }
         }
     )

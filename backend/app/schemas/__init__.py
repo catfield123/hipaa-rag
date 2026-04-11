@@ -8,9 +8,17 @@ from app.schemas.chat import ChatQueryRequest, ChatQueryResponse, QuoteSpan, Sou
 from app.schemas.planning import ResearchDecision
 from app.schemas.retrieval import RetrievalEvidence, SearchRequest, SearchResponse, StructuralFilters
 from app.schemas.system import HealthResponse, IngestionResult, IngestionSummary
-from app.schemas.types import QueryIntentEnum, RetrievalModeEnum, StructuralContentTargetEnum
+from app.schemas.types import (
+    AgentPipelinePhaseEnum,
+    QueryIntentEnum,
+    RagWsEventType,
+    RetrievalCallSkipReason,
+    RetrievalModeEnum,
+    StructuralContentTargetEnum,
+)
 
 __all__ = [
+    "AgentPipelinePhaseEnum",
     "ChatQueryRequest",
     "ChatQueryResponse",
     "HealthResponse",
@@ -18,7 +26,9 @@ __all__ = [
     "IngestionSummary",
     "QueryIntentEnum",
     "QuoteSpan",
+    "RagWsEventType",
     "ResearchDecision",
+    "RetrievalCallSkipReason",
     "RetrievalEvidence",
     "RetrievalModeEnum",
     "SearchRequest",

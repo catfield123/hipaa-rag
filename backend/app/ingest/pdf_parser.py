@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.string_templates.pdf_inline import INLINE_PAREN_WRAPPED
+
 HIPAA_PART_160_PREFIX = """PART 160 GENERAL ADMINISTRATIVE REQUIREMENTS
 
 Subpart A-General Provisions
@@ -136,7 +138,9 @@ class PdfToMarkdownConverter:
                 if line.startswith("("):
                     line = re.sub(
                         r"^\((.*?)\)",
-                        lambda match: f"({match.group(1).replace(' ', '')})",
+                        lambda match: INLINE_PAREN_WRAPPED.format(
+                            inner=match.group(1).replace(" ", ""),
+                        ),
                         line,
                         count=1,
                     )

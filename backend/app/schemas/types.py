@@ -35,6 +35,32 @@ class RetrievalModeEnum(StrEnum):
     STRUCTURE_LOOKUP = "structure_lookup"
 
 
+class AgentPipelinePhaseEnum(StrEnum):
+    """Pipeline step labels streamed on WebSocket ``phase`` (RAG agent)."""
+
+    START = "start"
+    PLAN = "plan"
+    RETRIEVE = "retrieve"
+    DECIDE = "decide"
+    ANSWER = "answer"
+
+
+class RagWsEventType(StrEnum):
+    """JSON ``type`` discriminator for ``/rag/query/ws`` frames."""
+
+    STATUS = "status"
+    ANSWER_DELTA = "answer_delta"
+    ERROR = "error"
+    RESULT = "result"
+
+
+class RetrievalCallSkipReason(StrEnum):
+    """Why a duplicate retrieval tool call was not executed in a round."""
+
+    DUPLICATE_EXACT_CALL = "duplicate_exact_call"
+    OVER_QUERY_BUDGET = "over_query_budget"
+
+
 class QueryIntentEnum(StrEnum):
     """Classifier output for answer path selection in :class:`~app.schemas.planning.ResearchDecision`.
 

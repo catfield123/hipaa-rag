@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from app.schemas.types import QueryIntentEnum
+from app.string_templates import llm_user
 
 FUNCTION_AGENT_SYSTEM_PROMPT = (
     "You are in the retrieval phase of a HIPAA answering agent. "
@@ -115,19 +116,14 @@ def build_retrieval_round_messages(
         {"role": "system", "content": FUNCTION_AGENT_SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": (
-                f"Retrieval round: {round_number}\n\n"
-                f"Question:\n{question}\n\n"
-                "Query budget for this round:\n"
-                f"- Broad evidence gathering: between {broad_query_min} and {max_queries} retrieval calls.\n"
-                "- Narrow follow-up may use one or two calls only if the current evidence already points to one specific "
-                "section, part, or subpart.\n\n"
-                "Evidence already collected:\n"
-                f"{json.dumps(evidence, ensure_ascii=True)}\n\n"
-                "Previous retrieval calls (full history):\n"
-                f"{json.dumps(retrieval_history, ensure_ascii=True)}\n\n"
-                "Previous decision:\n"
-                f"{json.dumps(prior_decision, ensure_ascii=True)}"
+            "content": llm_user.RETRIEVAL_ROUND.format(
+                round_number=round_number,
+                question=question,
+                broad_query_min=broad_query_min,
+                max_queries=max_queries,
+                evidence_json=json.dumps(evidence, ensure_ascii=True),
+                retrieval_history_json=json.dumps(retrieval_history, ensure_ascii=True),
+                prior_decision_json=json.dumps(prior_decision, ensure_ascii=True),
             ),
         },
     ]
@@ -157,13 +153,14 @@ def build_research_decision_messages(
         {"role": "system", "content": RESEARCH_DECISION_SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": (
-                f"Decision round after retrieval round: {round_number}\n\n"
-                f"Question:\n{question}\n\n"
-                "Supported sections explicitly present in evidence metadata or text:\n"
-                f"{json.dumps(_build_supported_sections(evidence), ensure_ascii=True)}\n\n"
-                "Current evidence:\n"
-                f"{json.dumps(evidence, ensure_ascii=True)}"
+            "content": llm_user.RESEARCH_DECISION.format(
+                round_number=round_number,
+                question=question,
+                supported_sections_json=json.dumps(
+                    _build_supported_sections(evidence),
+                    ensure_ascii=True,
+                ),
+                evidence_json=json.dumps(evidence, ensure_ascii=True),
             ),
         },
     ]
@@ -185,7 +182,10 @@ def _final_answer_system_content(decision: dict[str, Any]) -> str:
     content = FINAL_ANSWER_SYSTEM_PROMPT
     intent = decision.get("intent")
     if intent == QueryIntentEnum.QUOTE_REQUEST:
-        content = f"{content}\n\n{FINAL_ANSWER_QUOTE_REQUEST_SUPPLEMENT}"
+        content = llm_user.FINAL_ANSWER_SYSTEM_WITH_QUOTE_SUPPLEMENT.format(
+            system_prompt=content,
+            quote_supplement=FINAL_ANSWER_QUOTE_REQUEST_SUPPLEMENT,
+        )
     return content
 
 
@@ -213,14 +213,14 @@ def build_final_answer_messages(
         {"role": "system", "content": _final_answer_system_content(decision)},
         {
             "role": "user",
-            "content": (
-                f"Question:\n{question}\n\n"
-                "Decision:\n"
-                f"{json.dumps(decision, ensure_ascii=True)}\n\n"
-                "Section labels present in the excerpts below:\n"
-                f"{json.dumps(_build_supported_sections(evidence), ensure_ascii=True)}\n\n"
-                "Regulatory text excerpts (JSON):\n"
-                f"{json.dumps(evidence, ensure_ascii=True)}"
+            "content": llm_user.FINAL_ANSWER.format(
+                question=question,
+                decision_json=json.dumps(decision, ensure_ascii=True),
+                supported_sections_json=json.dumps(
+                    _build_supported_sections(evidence),
+                    ensure_ascii=True,
+                ),
+                evidence_json=json.dumps(evidence, ensure_ascii=True),
             ),
         },
     ]

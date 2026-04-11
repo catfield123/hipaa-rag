@@ -1,8 +1,18 @@
 import json
 import os
+from enum import StrEnum
 
 import gradio as gr
 import websocket
+
+
+class RagWsEventType(StrEnum):
+    """Mirror of ``app.schemas.types.RagWsEventType`` (WebSocket ``type`` field)."""
+
+    STATUS = "status"
+    ANSWER_DELTA = "answer_delta"
+    ERROR = "error"
+    RESULT = "result"
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 # Long-running retrieval + LLM; `connect` timeout is separate (seconds).
@@ -76,13 +86,13 @@ def _run_query(question: str):
                 raw = raw.decode("utf-8")
             msg = json.loads(raw)
             mtype = msg.get("type")
-            if mtype == "status":
+            if mtype == RagWsEventType.STATUS:
                 line = _format_status_line(str(msg.get("message") or ""))
                 yield (line, gr.skip(), gr.skip(), gr.update(interactive=False))
-            elif mtype == "answer_delta":
+            elif mtype == RagWsEventType.ANSWER_DELTA:
                 accumulated_answer += str(msg.get("text") or "")
                 yield (accumulated_answer, gr.skip(), gr.skip(), gr.update(interactive=False))
-            elif mtype == "result":
+            elif mtype == RagWsEventType.RESULT:
                 answer = str(msg.get("answer") or "")
                 quotes = msg.get("quotes") or []
                 sources = msg.get("sources") or []
@@ -90,7 +100,7 @@ def _run_query(question: str):
                 sources_text = _render_sources(sources) if sources else ""
                 yield (answer, quotes_text, sources_text, gr.update(interactive=True))
                 return
-            elif mtype == "error":
+            elif mtype == RagWsEventType.ERROR:
                 err = str(msg.get("message") or "error")
                 yield ("", "", f"Error: {err}", gr.update(interactive=True))
                 return

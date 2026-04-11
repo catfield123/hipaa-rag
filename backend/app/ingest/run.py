@@ -17,6 +17,9 @@ from sqlalchemy import delete, text
 from app.config import get_settings
 from app.db import SessionLocal
 from app.ingest.chunking import MarkdownChunker
+from app.string_templates import errors
+from app.string_templates.chunk_labels import STRUCTURAL_SECTION_BODY
+from app.string_templates.ingest_sql import BM25_INDEX_DDL, DROP_INDEX_IF_EXISTS
 from app.models import RetrievalChunk, StructuralContent
 from app.schemas.system import IngestionResult, IngestionSummary
 from app.schemas.types import StructuralContentTargetEnum
@@ -28,12 +31,7 @@ PART_LABEL_RE = re.compile(r"^PART\s+(\d{3})(?:\s*[-\s]?\s*(.*))?$", re.IGNORECA
 SUBPART_LABEL_RE = re.compile(r"^Subpart\s+([A-Z])(?:\s*-\s*(.*))?$", re.IGNORECASE)
 SECTION_LABEL_RE = re.compile(r"^§\s*(\d+\.\d+)\b(?:\s+(.*))?$")
 BM25_INDEX_NAME = "retrieval_chunks_search_text_bm25_idx"
-BM25_INDEX_SQL = f"""
-CREATE INDEX {BM25_INDEX_NAME}
-ON retrieval_chunks
-USING bm25 (search_text)
-WITH (text_config = 'english')
-"""
+BM25_INDEX_SQL = BM25_INDEX_DDL.format(index_name=BM25_INDEX_NAME).strip()
 
 def _normalize_optional(value: object) -> str | None:
     """Convert an arbitrary chunk field to stripped ``str`` or ``None`` if empty.
@@ -71,7 +69,9 @@ def _load_markdown(markdown_path: str | None) -> tuple[str, str]:
     settings = get_settings()
     source_path = Path(markdown_path or settings.filtered_markdown_path)
     if not source_path.exists():
-        raise FileNotFoundError(f"Filtered markdown not found at {source_path}")
+        raise FileNotFoundError(
+            errors.FILTERED_MARKDOWN_NOT_FOUND.format(path=source_path),
+        )
     return source_path.read_text(encoding="utf-8"), str(source_path)
 
 
@@ -280,7 +280,10 @@ def _build_structural_content(
                 content_type=StructuralContentTargetEnum.SECTION_TEXT,
                 path=list(section_entry["path"]),
                 path_text=" > ".join(section_entry["path"]),
-                text=f'{section_entry["section"]}\n\n' + "\n\n".join(section_entry["texts"]),
+                text=STRUCTURAL_SECTION_BODY.format(
+                    section_header=section_entry["section"],
+                    body="\n\n".join(section_entry["texts"]),
+                ),
                 part=section_entry["part"],
                 subpart=section_entry["subpart"],
                 section=section_entry["section"],
@@ -387,7 +390,9 @@ async def run_ingestion(
     embeddings = await embedding_service.embed_texts([str(chunk["text"]) for chunk in chunks]) if chunks else []
 
     async with SessionLocal() as session:
-        await session.execute(text(f"DROP INDEX IF EXISTS {BM25_INDEX_NAME}"))
+        await session.execute(
+            text(DROP_INDEX_IF_EXISTS.format(index_name=BM25_INDEX_NAME)),
+        )
         await session.execute(delete(StructuralContent))
         await session.execute(delete(RetrievalChunk))
 

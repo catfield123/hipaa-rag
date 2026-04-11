@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.string_templates.chunk_labels import MARKER_PARENS, PART_LINE, SECTION_LINE, SUBPART_LINE
+
 
 class MarkdownChunker:
     """Split normalized HIPAA markdown into structured retrieval chunks (dict records)."""
@@ -66,7 +68,10 @@ class MarkdownChunker:
             if part_match:
                 part_no, part_title = part_match.groups()
                 part_title = (part_title or "").strip()
-                current_part_label = f"PART {part_no} {part_title}".strip()
+                current_part_label = PART_LINE.format(
+                    part_no=part_no,
+                    part_title=part_title,
+                ).strip()
                 current_subpart_label = None
                 current_section_label = None
                 marker_stack = []
@@ -76,9 +81,10 @@ class MarkdownChunker:
             subpart_match = self.SUBPART_RE.match(line)
             if subpart_match:
                 subpart_letter, subpart_title = subpart_match.groups()
-                current_subpart_label = (
-                    f"Subpart {subpart_letter} - {subpart_title.strip()}".strip(" -")
-                )
+                current_subpart_label = SUBPART_LINE.format(
+                    letter=subpart_letter,
+                    title=subpart_title.strip(),
+                ).strip(" -")
                 current_section_label = None
                 marker_stack = []
                 current_chunk = None
@@ -92,7 +98,10 @@ class MarkdownChunker:
             section_match = self.SECTION_RE.match(line)
             if section_match:
                 sec_no, sec_title = section_match.groups()
-                current_section_label = f"§ {sec_no} {sec_title.strip()}".strip()
+                current_section_label = SECTION_LINE.format(
+                    sec_no=sec_no,
+                    title=sec_title.strip(),
+                ).strip()
                 marker_stack = []
                 current_chunk = None
                 continue
@@ -105,7 +114,7 @@ class MarkdownChunker:
                 if len(tokens) > 1:
                     marker_stack = [
                         {
-                            "marker": f"({token})",
+                            "marker": MARKER_PARENS.format(token=token),
                             "value": token,
                             "kind": self._marker_kind(token),
                             "rank": self._marker_rank(self._marker_kind(token)),
@@ -122,7 +131,7 @@ class MarkdownChunker:
 
                     marker_stack.append(
                         {
-                            "marker": f"({token})",
+                            "marker": MARKER_PARENS.format(token=token),
                             "value": token,
                             "kind": kind,
                             "rank": rank,

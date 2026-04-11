@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.string_templates import errors
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
 from app.schemas.types import StructuralContentTargetEnum
 from app.services.retrieval_components import (
@@ -245,7 +246,7 @@ class RetrievalFunctionExecutor:
                 ),
             )
         else:
-            raise ValueError(f"Unsupported function: {function_name}")
+            raise ValueError(errors.UNSUPPORTED_RETRIEVAL_FUNCTION.format(function_name=function_name))
 
         payload = {
             "function_name": function_name,
