@@ -1,0 +1,107 @@
+/* Hidden payload for Copy — no layout footprint (value still sent to the browser for JS) */
+.copy-payload-hidden {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    overflow: hidden !important;
+}
+/* Equal-height chat columns: shared min height, stack grows inside */
+.col-chat {
+    min-height: 520px;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+}
+.col-chat .fill {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+/* Right column: stack Output → progress bar → status/answer tight at the top (no giant flex gap) */
+.col-out {
+    align-items: stretch !important;
+}
+.col-out .out-heading {
+    flex: 0 0 auto !important;
+}
+.col-out .out-heading h1,
+.col-out .out-heading h2,
+.col-out .out-heading h3,
+.col-out .out-heading p {
+    margin: 0 0 0.35rem 0 !important;
+}
+.col-out #pipeline-status-html,
+.col-out .pipeline-status-block {
+    flex: 0 0 auto !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+.col-out .output-body-scroll {
+    flex: 0 1 auto !important;
+    min-height: 0 !important;
+}
+/* Answer markdown: top-aligned, full width (no vertical centering in the panel) */
+.md-answer-top {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start !important;
+    align-items: stretch !important;
+    text-align: left !important;
+}
+.md-answer-top > div {
+    width: 100% !important;
+    justify-content: flex-start !important;
+}
+.md-answer-top .prose,
+.md-answer-top [class*="markdown"] {
+    text-align: left !important;
+    width: 100%;
+}
+div.panel-scroll {
+    max-height: 580px;
+    overflow-y: auto;
+    width: 100%;
+}
+/* Question column only: keep a comfortable typing area */
+div.panel-scroll.question-panel {
+    min-height: 420px;
+}
+/* Answer panel: scroll long answers, no forced min-height (keeps status flush under progress bar) */
+div.output-body-scroll {
+    max-height: 580px;
+    overflow-y: auto;
+    width: 100%;
+}
+div.output-body-scroll.md-answer-top {
+    justify-content: flex-start !important;
+    align-items: stretch !important;
+    align-content: flex-start !important;
+}
+/* Native-style pipeline bar (not a slider) */
+.pipeline-progress-wrap {
+    width: 100%;
+    margin-top: 0 !important;
+    margin-bottom: 0.35rem !important;
+}
+.pipeline-progress-wrap.hidden {
+    display: none !important;
+}
+.pipeline-progress-track {
+    height: 8px;
+    border-radius: 4px;
+    background: #e8e8e8;
+    overflow: hidden;
+}
+.pipeline-progress-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #ffca28, #ffb300);
+    transition: width 0.2s ease;
+}
+.pipeline-progress-label {
+    font-size: 0.78rem;
+    color: #555;
+    margin-top: 0.25rem;
+}
