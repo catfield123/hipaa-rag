@@ -12,6 +12,8 @@ import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
 
+from app.config import get_settings
+
 
 revision: str = "0001_initial"
 down_revision: str | None = None
@@ -53,7 +55,7 @@ def upgrade() -> None:
         sa.Column("markers", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=False),
         sa.Column("metadata_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("embedding", Vector(1536)),
+        sa.Column("embedding", Vector(get_settings().embedding_dimension)),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
     )
     op.create_index("ix_retrieval_chunks_section", "retrieval_chunks", ["section"])

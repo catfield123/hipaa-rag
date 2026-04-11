@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     api_root_path: str = "/api"
     openai_api_key: str = ""
     openai_chat_model: str = "gpt-4.1-mini"
-    openai_embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
+    openai_embedding_model: str = "text-embedding-3-large"
+    embedding_dimension: int = 3072
     query_rewrite_limit: int = 5
     retrieval_limit: int = 12
     dense_limit: int = 24

@@ -55,10 +55,13 @@ class EmbeddingService:
 
         embeddings: list[list[float]] = []
         for batch in self._batched(texts, size=32):
-            response = await self._get_client().embeddings.create(
-                model=self.settings.openai_embedding_model,
-                input=batch,
-            )
+            kwargs: dict = {
+                "model": self.settings.openai_embedding_model,
+                "input": batch,
+            }
+            if self.settings.openai_embedding_model.startswith("text-embedding-3"):
+                kwargs["dimensions"] = self.settings.embedding_dimension
+            response = await self._get_client().embeddings.create(**kwargs)
             embeddings.extend(item.embedding for item in response.data)
         return embeddings
 
