@@ -33,109 +33,144 @@
 </a>
 </p>
 
-## Problem
+## Contents
 
-Answer questions about HIPAA regulatory text using evidence from an ingested corpus: retrieve relevant passages, combine lexical (BM25) and semantic (vector) search, and produce answers with an LLM agent rather than unconstrained free-form generation.
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [API](#api)
+- [Getting started](#getting-started)
 
-## Solution
+## Overview
 
-- **Ingest**: Normalized markdown is split into chunks; each chunk is embedded (OpenAI) and stored in PostgreSQL with **pgvector** and **pg_textsearch** (BM25 / full-text).
-- **Backend**: FastAPI — health checks, debug search routes, and RAG via `POST /rag/query` plus streaming `WebSocket /rag/query/ws` (status and answer deltas; final payload matches `POST /rag/query`).
-- **Frontend**: Gradio UI behind **nginx** (`/` → UI, `/api/` → backend).
-- **Public access**: Optional **ngrok** container tunneling nginx (HTTP and WebSocket).
+Regulatory Q&A over an ingested HIPAA text corpus: retrieval combines **BM25** (PostgreSQL `pg_textsearch`) and **dense vectors** (`pgvector`); an **iterative tool-calling** flow (`AnsweringService`) gathers evidence before a grounded final completion.
 
-### RAG agent pipeline
+**Components**
 
-The answering service is a **multi-round tool-calling loop** (`AnsweringService` in `backend/app/services/answering.py`). Each round has two model steps: (1) **retrieval** — the model must call at least one retrieval tool (`hybrid_search`, `bm25_search`, `lookup_structural_content`, `get_section_text`, `list_part_outline`, `list_subpart_outline`); results are merged into deduplicated evidence. (2) **decision** — the model must call `decide_research_status` to set intent and whether to fetch more sources. If `continue_retrieval` is false, a **final** completion generates the user-facing answer from the evidence; if true, the loop repeats until `agent_max_rounds`, then a **forced** decision triggers the same final step. Optional WebSocket clients receive `phase` status lines (`START`, `PLAN`, `RETRIEVE`, `DECIDE`, `ANSWER`) during this flow.
+| Layer | Role |
+|-------|------|
+| Ingest | Chunk normalized markdown, embed with OpenAI, persist rows and indexes. |
+| API | FastAPI: RAG via `POST /api/rag/query` and `WebSocket /api/rag/query/ws`, admin search debug routes. |
+| UI | Gradio. |
+| nginx | Reverse proxy: `/` → UI, `/api/` → backend. |
+| Tunnel | Optional ngrok service forwarding to nginx. |
 
-**Agents along the spine (one round):** orchestrator → **retrieval agent** (LLM, `tool_choice` required) → **tool workers** (PostgreSQL + merged evidence / history) → **research judge** (`decide_research_status`).
+## Architecture
 
-| After the judge | What happens |
-|-----------------|--------------|
-| `continue_retrieval` is **no** | **Answer agent** runs (grounded completion; optional token stream) → `ChatQueryResponse`. |
-| `continue_retrieval` is **yes** and rounds remain | Next round starts again at the **retrieval agent**. |
-| `continue_retrieval` is **yes** but `agent_max_rounds` is exhausted | **Round cap**: forced `ResearchDecision` → same **answer agent** → response. |
+### Ingestion and storage
 
-### Chunking and indexes
+- **Chunking** (`MarkdownChunker`): single pass over CFR-style markdown; tracks Part → Subpart → § section; splits at § boundaries and paragraph markers `(a)`, `(1)(i)`, etc.; nested markers use a stack; continuation lines attach to the active chunk; boilerplate lines (e.g. table of contents, Federal Register lines, `[Reserved]`) are dropped.
+- **Lexical index**: BM25 on a stored generated column `search_text` (path + body) via `pg_textsearch`.
+- **Dense storage**: embeddings in `pgvector`; queries use **exact** nearest-neighbor distance (no HNSW/IVFFlat in this deployment).
+- **Ingest completion**: BM25 index is dropped if present and rebuilt after load (`CREATE INDEX … USING bm25`).
 
-Chunking is **structure-aware**: a line-by-line pass over normalized HIPAA/CFR-style markdown tracks **Part → Subpart → § section** headings and builds retrieval chunks at § boundaries and at CFR-style paragraph markers such as `(a)` or `(1)(i)`. Nested markers are tracked with a small stack so each chunk carries the correct path; continuation lines are merged into the active chunk when they clearly belong to the same paragraph or list item. Noise lines (e.g. “Contents”, Federal Register references, `[Reserved]`) are skipped.
+PDF helpers live in [`backend/app/ingest/pdf_parser.py`](backend/app/ingest/pdf_parser.py). The demo ships with pre-generated [`filtered_markdown.md`](filtered_markdown.md); point `FILTERED_MARKDOWN_SOURCE` at your file or regenerate from PDF using that module.
 
-**Lexical** search uses a **BM25** index over a persisted `search_text` column (path plus body) via **pg_textsearch**. **Dense** vectors live in **pgvector**, but no **HNSW** (or IVFFlat) index is created: the chunk count is small enough that exact nearest-neighbor search is acceptable and avoids extra index build and tuning.
+### Query pipeline
 
-At the end of ingest the BM25 index is **recreated** (drop if present, then `CREATE INDEX … USING bm25`); vector search does not add a separate ANN index.
+Implementation: `backend/app/services/answering.py` (`AnsweringService`). Pattern: **iterative retrieval** with **mandatory** retrieval tool calls per round, then a **separate** `decide_research_status` call, then optional further rounds up to `agent_max_rounds`.
 
-## Environment variables (from `.env.example`)
+**Per round**
 
-Copy `.env.example` to `.env` and fill in values.
+1. Chat completion with retrieval tools (`tool_choice` required): `hybrid_search`, `bm25_search`, `lookup_structural_content`, `get_section_text`, `list_part_outline`, `list_subpart_outline`.
+2. `RetrievalFunctionExecutor` executes tools against PostgreSQL; evidence is merged and deduplicated; history is updated.
+3. Chat completion with only `decide_research_status` returns `ResearchDecision` (`continue_retrieval`, `intent`, etc.).
+
+Tool and session wiring runs once at the start of `answer_question`; there is no standalone orchestrator service.
+
+| `continue_retrieval` | Behavior |
+|----------------------|----------|
+| `false` | Final chat completion over accumulated evidence (optional streaming) → `ChatQueryResponse`. |
+| `true`, rounds left | Next iteration from step 1. |
+| `true`, `agent_max_rounds` reached | Forced `ResearchDecision`, then final completion as above. |
+
+WebSocket clients may receive `type: status` payloads with `phase` values such as `START`, `PLAN`, `RETRIEVE`, `DECIDE`, `ANSWER`.
+
+## Configuration
+
+Copy `.env.example` to `.env`. Additional knobs (retrieval limits, `agent_max_rounds`, etc.) map from `backend/app/config.py` to `UPPER_SNAKE_CASE` environment variables.
 
 | Variable | Purpose |
 |----------|---------|
-| `NGROK_AUTHTOKEN` | ngrok auth token (required by the `ngrok` service in Compose). |
-| `NGROK_URL` | Static ngrok domain (e.g. `your-name.ngrok-free.app`) — passed to ngrok as `http --url=...`. |
-| `OPENAI_API_KEY` | OpenAI API key for chat and embeddings. |
-| `OPENAI_CHAT_MODEL` | Chat model for answers and agent steps (example default: `gpt-4.1-mini`). |
-| `OPENAI_EMBEDDING_MODEL` | Embedding model id (example default: `text-embedding-3-large`). |
-| `EMBEDDING_DIMENSION` | Vector dimension; must match the embedding model (often `3072` for `text-embedding-3-large`). |
-| `POSTGRES_DB` | PostgreSQL database name. |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` | PostgreSQL credentials (must match `DATABASE_URL`). |
-| `DATABASE_URL` | Async SQLAlchemy URL (`postgresql+asyncpg://...`); in Docker the DB host is the `db` service name (see `.env.example`). |
-| `BACKEND_URL` | Base URL the frontend uses to reach the API (Docker example: `http://nginx/api` so the UI calls the API through the same host as the browser). |
-| `FILTERED_MARKDOWN_SOURCE` | **Host** path to the markdown file for ingest; mounted in the container as `/data/filtered_markdown.md`. |
+| `NGROK_AUTHTOKEN` | ngrok authentication (Compose `ngrok` service). |
+| `NGROK_URL` | Reserved static hostname (e.g. `*.ngrok-free.app`); passed as `http --url=…`. |
+| `OPENAI_API_KEY` | OpenAI API key (chat + embeddings). |
+| `OPENAI_CHAT_MODEL` | Chat model id (e.g. `gpt-4.1-mini`). |
+| `OPENAI_EMBEDDING_MODEL` | Embedding model id (e.g. `text-embedding-3-large`). |
+| `EMBEDDING_DIMENSION` | Vector width; must match the embedding model (e.g. `3072` for `text-embedding-3-large`). |
+| `POSTGRES_DB` | Database name. |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` | Credentials; must align with `DATABASE_URL`. |
+| `DATABASE_URL` | Async SQLAlchemy URL (`postgresql+asyncpg://…`); in Compose the host is the `db` service. |
+| `BACKEND_URL` | Base URL the Gradio process uses for API/WebSocket calls (Compose default: `http://nginx/api`). |
+| `FILTERED_MARKDOWN_SOURCE` | Host path to the markdown file mounted into the ingest container as `/data/filtered_markdown.md`. |
 
-Extra tuning (retriever limits, agent rounds, etc.) is defined in `backend/app/config.py` and can be overridden with the same names in `UPPER_SNAKE_CASE` environment variables without editing code.
+## API
 
-## API (behind nginx, base prefix `/api`)
+All routes below are served behind nginx with path prefix **`/api`** (FastAPI `root_path`). Example base: `http://localhost`.
 
-Full paths from the site root: `http://<host>/api/...`. Local (no ngrok): `http://localhost/api/...`.
+| Method | Path | Description |
+|--------|------|---------------|
+| `GET` | `/api/health` | Liveness: `{"status": "ok"}`. |
+| `POST` | `/api/rag/query` | Body: `{"question": "…"}`. Returns answer, quotes, sources, intent, `retrieval_rounds`. |
+| `WebSocket` | `/api/rag/query/ws` | Client sends one text frame: `{"question": "…"}`; server streams status/delta events, then a result payload aligned with `POST /rag/query`. |
+| `POST` | `/api/admin/search/bm25` | Debug: BM25 search over chunks. |
+| `POST` | `/api/admin/search/dense` | Debug: dense vector search. |
+| `POST` | `/api/admin/search/hybrid` | Debug: hybrid retrieval. |
+| `POST` | `/api/admin/search/structure` | Debug: structural lookup; request must include `structure_target`. |
 
-| Method & path | Description |
-|---------------|-------------|
-| `GET /api/health` | Liveness: `{ "status": "ok" }`. |
-| `POST /api/rag/query` | JSON body `{ "question": "..." }` — full RAG response (quotes, sources, intent, etc.). |
-| `WebSocket /api/rag/query/ws` | Send one text frame with JSON `{ "question": "..." }`; receive status/delta events then the final result. |
-| `POST /api/admin/search/bm25` | Debug: BM25 over chunks. |
-| `POST /api/admin/search/dense` | Debug: vector search. |
-| `POST /api/admin/search/hybrid` | Debug: hybrid dense + BM25. |
-| `POST /api/admin/search/structure` | Debug: structural lookup; body must include `structure_target`. |
+Interactive schema: `/api/docs` (Swagger UI).
 
-OpenAPI docs: [http://localhost/api/docs](http://localhost/api/docs) (Swagger UI).
+## Getting started
 
-## Ingest (run once before relying on RAG)
+Docker Compose is the supported path. Variable reference: [Configuration](#configuration).
 
-Run ingest **before** you expect meaningful RAG answers: until chunks and embeddings are loaded, search and the agent operate on an empty corpus.
+### 1. Environment
 
-The repo includes PDF-to-markdown helpers in [`backend/app/ingest/pdf_parser.py`](backend/app/ingest/pdf_parser.py). For a straightforward demo, the output of that parsing step is already checked in as `filtered_markdown.md` (see `FILTERED_MARKDOWN_SOURCE`); you can inspect or adapt the parser there if you need to regenerate markdown from a PDF.
+Run:
+```bash
+cp .env.example .env
+``` 
 
-The Docker `ingest` service: wait for PostgreSQL → `alembic upgrade head` → `python -m app.ingest.run` (chunking, embeddings, DB load, indexes).
+And set at least `OPENAI_API_KEY`, `DATABASE_URL`, and `FILTERED_MARKDOWN_SOURCE` (path to `filtered_markdown.md` on the host).
 
-**Recommended order (local Docker):**
+### 2. Database
 
-1. Start the database only:  
-   `docker compose up -d db`
-2. Ensure `.env` has correct `DATABASE_URL`, `OPENAI_*`, `EMBEDDING_DIMENSION`, and `FILTERED_MARKDOWN_SOURCE` pointing at your `filtered_markdown.md`.
-3. Run ingest once:  
-   `docker compose run --rm ingest`  
-   Wait for `[ingest] finished successfully`.
-4. Start the rest (no public tunnel):  
-   `docker compose up -d backend frontend nginx`
+```bash
+docker compose up -d db
+```
 
-Re-run `ingest` after changing source markdown, embedding model, or DB schema (in development you often recreate the DB and ingest again).
+### 3. Ingest (required before the API is useful)
 
-## Local development (Docker)
+Without rows in `retrieval_chunks`, search and RAG return empty results. The `ingest` service waits for PostgreSQL, runs `alembic upgrade head`, then `python -m app.ingest.run` (chunk, embed, load, rebuild BM25).
 
-1. Create `.env` from `.env.example`.
-2. `docker compose up -d db`
-3. `docker compose run --rm ingest`
-4. `docker compose up -d backend frontend nginx`
-5. UI: [http://localhost/](http://localhost/) · health check: [http://localhost/api/health](http://localhost/api/health) · interactive API docs (OpenAPI / Swagger): [http://localhost/api/docs](http://localhost/api/docs)
+```bash
+docker compose run --rm ingest
+```
 
-## Internet-facing deploy (ngrok)
+Wait for `[ingest] finished successfully`. 
 
-1. Register a static domain in ngrok and set `NGROK_AUTHTOKEN` and `NGROK_URL` in `.env`.
-2. Run ingest as above, then start the full stack **including** ngrok:  
-   `docker compose up -d`  
-   or explicitly:  
-   `docker compose up -d db backend frontend nginx ngrok`
-3. External base URL: `https://<your-ngrok-host>/` for the UI and `https://<your-ngrok-host>/api/...` for HTTP; WebSocket from outside: `wss://<your-ngrok-host>/api/rag/query/ws`.
+Re-run after you change source markdown, the embedding model, or the DB schema (in dev, often `docker compose down -v`, rebuild and ingest again).
 
-With the default Compose setup, `BACKEND_URL=http://nginx/api` is correct: the Gradio app opens the RAG WebSocket from **inside** the frontend container to `nginx`, so you normally do not need to change `BACKEND_URL` when adding ngrok.
+### 4. Application stack
+
+```bash
+docker compose up -d backend frontend nginx
+```
+
+### 5. Verify
+
+| What | URL |
+|-------|-----|
+| UI | [http://localhost/](http://localhost/) |
+| Health | [http://localhost/api/health](http://localhost/api/health) |
+| OpenAPI | [http://localhost/api/docs](http://localhost/api/docs) |
+
+### Optional: HTTPS via ngrok
+
+1. Reserve a static hostname in ngrok; set `NGROK_AUTHTOKEN` and `NGROK_URL` in `.env`.
+2. After ingest, include ngrok in the stack:  
+   `docker compose up -d db backend frontend nginx ngrok`  
+   or `docker compose up -d` if every service is defined in your Compose file.
+3. UI: `https://<NGROK_URL>/` · HTTP API: `https://<NGROK_URL>/api/…` · WebSocket from the browser: `wss://<NGROK_URL>/api/rag/query/ws`.
+
+Default `BACKEND_URL=http://nginx/api` stays correct: Gradio calls nginx inside the Compose network; ngrok only fronts nginx for external clients.
