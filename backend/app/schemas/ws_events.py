@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from app.schemas.chat import ChatQueryResponse
 from app.schemas.types import AgentPipelinePhaseEnum, RagWsEventType
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class WsStatusEvent(BaseModel):

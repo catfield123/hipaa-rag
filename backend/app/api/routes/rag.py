@@ -6,10 +6,6 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, WebSocket
-from pydantic import ValidationError
-from starlette.websockets import WebSocketDisconnect
-
 from app.api.deps import (
     AnsweringServiceDep,
     Bm25ServiceDep,
@@ -28,6 +24,9 @@ from app.schemas.ws_events import (
     ws_result_event_payload,
 )
 from app.services.rag_query_runner import run_rag_query
+from fastapi import APIRouter, WebSocket
+from pydantic import ValidationError
+from starlette.websockets import WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 

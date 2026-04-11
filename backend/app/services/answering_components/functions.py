@@ -6,9 +6,6 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.string_templates import errors
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
 from app.schemas.types import StructuralContentTargetEnum
 from app.services.retrieval_components import (
@@ -17,6 +14,8 @@ from app.services.retrieval_components import (
     HybridRetriever,
     StructuralContentRetriever,
 )
+from app.string_templates import errors
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def build_retrieval_functions(*, default_limit: int) -> list[dict[str, Any]]:

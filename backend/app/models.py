@@ -5,14 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from app.config import get_settings
+from app.schemas.types import StructuralContentTargetEnum
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Computed, DateTime, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-
-from app.config import get_settings
-from app.schemas.types import StructuralContentTargetEnum
-
 
 settings = get_settings()
 
@@ -20,7 +18,6 @@ settings = get_settings()
 class Base(DeclarativeBase):
     """SQLAlchemy declarative base for HIPAA RAG ORM models."""
 
-    pass
 
 
 class RetrievalChunk(Base):

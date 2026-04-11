@@ -7,10 +7,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from openai import AsyncOpenAI
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.string_templates import rag_agent
 from app.config import Settings, get_settings
 from app.core.exceptions import ConfigurationError
 from app.schemas.planning import ResearchDecision
@@ -38,6 +34,10 @@ from app.services.retrieval_components import (
     HybridRetriever,
     StructuralContentRetriever,
 )
+from app.string_templates import rag_agent
+from openai import AsyncOpenAI
+from sqlalchemy.ext.asyncio import AsyncSession
+
 logger = logging.getLogger(__name__)
 
 AgentStatusEmitter = Callable[[dict[str, Any]], Awaitable[None]]
@@ -379,9 +379,7 @@ class AnsweringService:
                 "function": {"name": DECIDE_RESEARCH_STATUS_FUNCTION_NAME},
             },
         )
-        return ResearchDecision.model_validate(
-            extract_research_decision_payload(response.choices[0].message)
-        )
+        return ResearchDecision.model_validate(extract_research_decision_payload(response.choices[0].message))
 
     async def _generate_final_answer(
         self,

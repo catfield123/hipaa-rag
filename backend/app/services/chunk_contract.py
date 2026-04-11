@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy.sql.elements import ColumnElement
-
 from app.models import RetrievalChunk, StructuralContent
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
 from app.schemas.types import RetrievalModeEnum
+from sqlalchemy.sql.elements import ColumnElement
 
 
 def build_retrieval_evidence(

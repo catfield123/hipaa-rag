@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-
 from app.schemas.types import QueryIntentEnum
+from pydantic import BaseModel, Field
 
 
 class ResearchDecision(BaseModel):

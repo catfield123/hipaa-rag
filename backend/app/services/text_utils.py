@@ -7,7 +7,6 @@ from collections.abc import Iterable
 
 from nltk.stem.snowball import SnowballStemmer
 
-
 STOP_WORDS = {
     "a",
     "an",

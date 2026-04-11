@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models import RetrievalChunk
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
 from app.schemas.types import RetrievalModeEnum
-from app.services.chunk_contract import build_retrieval_evidence, build_structural_filter_clauses
+from app.services.chunk_contract import (
+    build_retrieval_evidence,
+    build_structural_filter_clauses,
+)
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class BM25Service:

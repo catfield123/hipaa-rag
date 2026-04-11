@@ -14,6 +14,7 @@ class RagWsEventType(StrEnum):
     ERROR = "error"
     RESULT = "result"
 
+
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 # Long-running retrieval + LLM; `connect` timeout is separate (seconds).
 _WS_RECV_TIMEOUT_SEC = 600
@@ -118,9 +119,7 @@ def _run_query(question: str):
 
 with gr.Blocks() as demo:
     gr.Markdown("## HIPAA RAG")
-    gr.Markdown(
-        "Ask questions about HIPAA. This UI shows the answer, quotes, and sources without chat history."
-    )
+    gr.Markdown("Ask questions about HIPAA. This UI shows the answer, quotes, and sources without chat history.")
     question_input = gr.Textbox(
         label="Question",
         placeholder="e.g. Does HIPAA mention encryption best practices?",

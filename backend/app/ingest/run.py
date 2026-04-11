@@ -9,29 +9,28 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from pathlib import Path
 import re
-
-from sqlalchemy import delete, text
+from pathlib import Path
 
 from app.config import get_settings
 from app.db import SessionLocal
 from app.ingest.chunking import MarkdownChunker
-from app.string_templates import errors
-from app.string_templates.chunk_labels import STRUCTURAL_SECTION_BODY
-from app.string_templates.ingest_sql import BM25_INDEX_DDL, DROP_INDEX_IF_EXISTS
 from app.models import RetrievalChunk, StructuralContent
 from app.schemas.system import IngestionResult, IngestionSummary
 from app.schemas.types import StructuralContentTargetEnum
 from app.services.embeddings import EmbeddingService
 from app.services.text_utils import estimate_token_count
-
+from app.string_templates import errors
+from app.string_templates.chunk_labels import STRUCTURAL_SECTION_BODY
+from app.string_templates.ingest_sql import BM25_INDEX_DDL, DROP_INDEX_IF_EXISTS
+from sqlalchemy import delete, text
 
 PART_LABEL_RE = re.compile(r"^PART\s+(\d{3})(?:\s*[-\s]?\s*(.*))?$", re.IGNORECASE)
 SUBPART_LABEL_RE = re.compile(r"^Subpart\s+([A-Z])(?:\s*-\s*(.*))?$", re.IGNORECASE)
 SECTION_LABEL_RE = re.compile(r"^§\s*(\d+\.\d+)\b(?:\s+(.*))?$")
 BM25_INDEX_NAME = "retrieval_chunks_search_text_bm25_idx"
 BM25_INDEX_SQL = BM25_INDEX_DDL.format(index_name=BM25_INDEX_NAME).strip()
+
 
 def _normalize_optional(value: object) -> str | None:
     """Convert an arbitrary chunk field to stripped ``str`` or ``None`` if empty.

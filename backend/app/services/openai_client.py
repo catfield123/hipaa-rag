@@ -2,9 +2,8 @@
 
 from functools import lru_cache
 
-from openai import AsyncOpenAI
-
 from app.config import get_settings
+from openai import AsyncOpenAI
 
 
 @lru_cache

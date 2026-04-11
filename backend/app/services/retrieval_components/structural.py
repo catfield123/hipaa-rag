@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models import StructuralContent
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
 from app.schemas.types import StructuralContentTargetEnum
@@ -12,6 +9,8 @@ from app.services.chunk_contract import (
     build_structural_content_evidence,
     build_structural_content_filter_clauses,
 )
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class StructuralContentRetriever:
@@ -41,14 +40,18 @@ class StructuralContentRetriever:
         """
 
         rows = (
-            await session.execute(
-                select(StructuralContent)
-                .where(
-                    StructuralContent.content_type == target,
-                    *build_structural_content_filter_clauses(filters),
+            (
+                await session.execute(
+                    select(StructuralContent)
+                    .where(
+                        StructuralContent.content_type == target,
+                        *build_structural_content_filter_clauses(filters),
+                    )
+                    .order_by(StructuralContent.id)
+                    .limit(limit)
                 )
-                .order_by(StructuralContent.id)
-                .limit(limit)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [build_structural_content_evidence(item) for item in rows]

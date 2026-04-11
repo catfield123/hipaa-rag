@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from app.schemas.types import RetrievalModeEnum, StructuralContentTargetEnum
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StructuralFilters(BaseModel):

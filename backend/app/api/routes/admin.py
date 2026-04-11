@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
-
 from app.api.deps import (
     Bm25ServiceDep,
     DbSessionDep,
@@ -14,6 +12,7 @@ from app.api.deps import (
 from app.schemas.retrieval import SearchRequest, SearchResponse
 from app.schemas.system import HealthResponse
 from app.schemas.types import RetrievalModeEnum
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter(tags=["admin"])
 
@@ -22,7 +21,7 @@ router = APIRouter(tags=["admin"])
     "/health",
     response_model=HealthResponse,
     summary="Health check",
-    description="Returns `{\"status\": \"ok\"}` when the API process is running.",
+    description='Returns `{"status": "ok"}` when the API process is running.',
 )
 async def health() -> HealthResponse:
     """Return a simple health-check response.
@@ -172,9 +171,7 @@ async def search_hybrid(
         400: {
             "description": "`structure_target` missing",
             "content": {
-                "application/json": {
-                    "example": {"detail": "structure_target is required for structure lookup."}
-                }
+                "application/json": {"example": {"detail": "structure_target is required for structure lookup."}}
             },
         },
     },

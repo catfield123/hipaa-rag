@@ -6,11 +6,10 @@ import math
 import random
 from itertools import islice
 
-from openai import AsyncOpenAI
-
 from app.config import get_settings
 from app.core.exceptions import ConfigurationError
 from app.services.openai_client import get_openai_client
+from openai import AsyncOpenAI
 
 
 class EmbeddingService:
@@ -130,10 +129,7 @@ class EmbeddingService:
             None
         """
 
-        values = [
-            self._random.uniform(-1.0, 1.0)
-            for _ in range(self.settings.embedding_dimension)
-        ]
+        values = [self._random.uniform(-1.0, 1.0) for _ in range(self.settings.embedding_dimension)]
         norm = math.sqrt(sum(value * value for value in values))
         if norm == 0:
             values[0] = 1.0

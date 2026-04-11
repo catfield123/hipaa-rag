@@ -24,9 +24,6 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.db import get_db_session
 from app.services.answering import AnsweringService
 from app.services.dependencies import get_answering_service, get_rag_response_builder
@@ -43,6 +40,8 @@ from app.services.retrieval_components.dependencies import (
     get_hybrid_retriever,
     get_structural_content_retriever,
 )
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 Bm25ServiceDep = Annotated[BM25Service, Depends(get_bm25_service)]

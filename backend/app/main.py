@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-
 from app.api.routes.admin import router as admin_router
 from app.api.routes.rag import router as rag_router
 from app.config import get_settings
 from app.core.exceptions import AppError
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 settings = get_settings()
 app = FastAPI(

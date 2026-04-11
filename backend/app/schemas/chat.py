@@ -6,9 +6,8 @@ aggregate shape (``QuoteSpan``, ``SourceItem``, ``ChatQueryRequest``, ``ChatQuer
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from app.schemas.types import QueryIntentEnum
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class QuoteSpan(BaseModel):
@@ -56,7 +55,7 @@ class SourceItem(BaseModel):
                 "section": "§ 164.312",
                 "part": "164",
                 "subpart": "C",
-                "markers": ["(a)","(2)","(iv)"],
+                "markers": ["(a)", "(2)", "(iv)"],
             }
         }
     )

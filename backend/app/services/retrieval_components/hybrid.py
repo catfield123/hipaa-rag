@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, literal, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.config import Settings
 from app.models import RetrievalChunk
 from app.schemas.retrieval import RetrievalEvidence, StructuralFilters
 from app.schemas.types import RetrievalModeEnum
-from app.services.chunk_contract import build_retrieval_evidence, build_structural_filter_clauses
+from app.services.chunk_contract import (
+    build_retrieval_evidence,
+    build_structural_filter_clauses,
+)
 from app.services.embeddings import EmbeddingService
 from app.services.retrieval_components.bm25 import BM25Service
+from sqlalchemy import func, literal, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class HybridRetriever:

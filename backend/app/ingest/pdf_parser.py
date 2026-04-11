@@ -115,9 +115,7 @@ class PdfToMarkdownConverter:
         md_lines = markdown.splitlines()
 
         try:
-            start_index = next(
-                i for i, line in enumerate(md_lines) if line.strip().startswith(start_line)
-            )
+            start_index = next(i for i, line in enumerate(md_lines) if line.strip().startswith(start_line))
         except StopIteration:
             normalized = ""
         else:
@@ -211,9 +209,7 @@ class PdfToMarkdownConverter:
         try:
             from docling.document_converter import DocumentConverter
         except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "PdfToMarkdownConverter requires the optional 'docling' package."
-            ) from exc
+            raise RuntimeError("PdfToMarkdownConverter requires the optional 'docling' package.") from exc
         return DocumentConverter()
 
 

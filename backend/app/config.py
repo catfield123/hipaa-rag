@@ -106,11 +106,7 @@ class Settings(BaseSettings):
             None
         """
 
-        return (
-            self.database_url
-            .replace("+asyncpg", "")
-            .replace("+psycopg", "")
-        )
+        return self.database_url.replace("+asyncpg", "").replace("+psycopg", "")
 
 
 @lru_cache

@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import psycopg
-
 from app.config import get_settings
 
 

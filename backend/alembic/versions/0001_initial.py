@@ -7,13 +7,11 @@ Create Date: 2026-04-10 00:00:00
 
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
+from app.config import get_settings
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
-
-from app.config import get_settings
-
 
 revision: str = "0001_initial"
 down_revision: str | None = None
@@ -61,14 +59,12 @@ def upgrade() -> None:
     op.create_index("ix_retrieval_chunks_section", "retrieval_chunks", ["section"])
     op.create_index("ix_retrieval_chunks_part", "retrieval_chunks", ["part"])
     op.create_index("ix_retrieval_chunks_subpart", "retrieval_chunks", ["subpart"])
-    op.execute(
-        """
+    op.execute("""
         CREATE INDEX retrieval_chunks_search_text_bm25_idx
         ON retrieval_chunks
         USING bm25 (search_text)
         WITH (text_config = 'english')
-        """
-    )
+        """)
     op.create_table(
         "structural_content",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -92,6 +88,7 @@ def upgrade() -> None:
     op.create_index("ix_structural_content_part_number", "structural_content", ["part_number"])
     op.create_index("ix_structural_content_subpart_key", "structural_content", ["subpart_key"])
     op.create_index("ix_structural_content_section_number", "structural_content", ["section_number"])
+
 
 def downgrade() -> None:
     """Drop indexes, tables, and extensions created in :func:`upgrade`.

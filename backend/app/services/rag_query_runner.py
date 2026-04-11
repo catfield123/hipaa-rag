@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.schemas.chat import ChatQueryResponse
 from app.services.answering import (
     AgentAnswerDeltaEmitter,
@@ -17,6 +15,7 @@ from app.services.retrieval_components import (
     HybridRetriever,
     StructuralContentRetriever,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def run_rag_query(

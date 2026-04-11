@@ -6,7 +6,12 @@ Re-exports chat, planning, retrieval, system, and types symbols for convenience 
 
 from app.schemas.chat import ChatQueryRequest, ChatQueryResponse, QuoteSpan, SourceItem
 from app.schemas.planning import ResearchDecision
-from app.schemas.retrieval import RetrievalEvidence, SearchRequest, SearchResponse, StructuralFilters
+from app.schemas.retrieval import (
+    RetrievalEvidence,
+    SearchRequest,
+    SearchResponse,
+    StructuralFilters,
+)
 from app.schemas.system import HealthResponse, IngestionResult, IngestionSummary
 from app.schemas.types import (
     AgentPipelinePhaseEnum,

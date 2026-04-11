@@ -7,7 +7,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.string_templates.chunk_labels import MARKER_PARENS, PART_LINE, SECTION_LINE, SUBPART_LINE
+from app.string_templates.chunk_labels import (
+    MARKER_PARENS,
+    PART_LINE,
+    SECTION_LINE,
+    SUBPART_LINE,
+)
 
 
 class MarkdownChunker:
