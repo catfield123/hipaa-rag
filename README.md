@@ -44,11 +44,25 @@ Answer questions about HIPAA regulatory text using evidence from an ingested cor
 - **Frontend**: Gradio UI behind **nginx** (`/` → UI, `/api/` → backend).
 - **Public access**: Optional **ngrok** container tunneling nginx (HTTP and WebSocket).
 
+### RAG agent pipeline
+
+The answering service is a **multi-round tool-calling loop** (`AnsweringService` in `backend/app/services/answering.py`). Each round has two model steps: (1) **retrieval** — the model must call at least one retrieval tool (`hybrid_search`, `bm25_search`, `lookup_structural_content`, `get_section_text`, `list_part_outline`, `list_subpart_outline`); results are merged into deduplicated evidence. (2) **decision** — the model must call `decide_research_status` to set intent and whether to fetch more sources. If `continue_retrieval` is false, a **final** completion generates the user-facing answer from the evidence; if true, the loop repeats until `agent_max_rounds`, then a **forced** decision triggers the same final step. Optional WebSocket clients receive `phase` status lines (`START`, `PLAN`, `RETRIEVE`, `DECIDE`, `ANSWER`) during this flow.
+
+**Agents along the spine (one round):** orchestrator → **retrieval agent** (LLM, `tool_choice` required) → **tool workers** (PostgreSQL + merged evidence / history) → **research judge** (`decide_research_status`).
+
+| After the judge | What happens |
+|-----------------|--------------|
+| `continue_retrieval` is **no** | **Answer agent** runs (grounded completion; optional token stream) → `ChatQueryResponse`. |
+| `continue_retrieval` is **yes** and rounds remain | Next round starts again at the **retrieval agent**. |
+| `continue_retrieval` is **yes** but `agent_max_rounds` is exhausted | **Round cap**: forced `ResearchDecision` → same **answer agent** → response. |
+
 ### Chunking and indexes
 
 Chunking is **structure-aware**: a line-by-line pass over normalized HIPAA/CFR-style markdown tracks **Part → Subpart → § section** headings and builds retrieval chunks at § boundaries and at CFR-style paragraph markers such as `(a)` or `(1)(i)`. Nested markers are tracked with a small stack so each chunk carries the correct path; continuation lines are merged into the active chunk when they clearly belong to the same paragraph or list item. Noise lines (e.g. “Contents”, Federal Register references, `[Reserved]`) are skipped.
 
 **Lexical** search uses a **BM25** index over a persisted `search_text` column (path plus body) via **pg_textsearch**. **Dense** vectors live in **pgvector**, but no **HNSW** (or IVFFlat) index is created: the chunk count is small enough that exact nearest-neighbor search is acceptable and avoids extra index build and tuning.
+
+At the end of ingest the BM25 index is **recreated** (drop if present, then `CREATE INDEX … USING bm25`); vector search does not add a separate ANN index.
 
 ## Environment variables (from `.env.example`)
 
