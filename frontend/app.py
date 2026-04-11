@@ -18,7 +18,6 @@ class RagWsEventType(StrEnum):
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 _WS_RECV_TIMEOUT_SEC = 600
 
-# Hugging Face–style yellow primary (Gradio default theme is orange; we override the Ask button only).
 _UI_CSS = """
 .yellow-ask button {
     background: linear-gradient(180deg, #ffe082 0%, #ffca28 100%) !important;
@@ -34,7 +33,7 @@ _UI_CSS = """
     opacity: 0.65 !important;
 }
 div.panel-scroll {
-    max-height: 360px;
+    max-height: 420px;
     overflow-y: auto;
 }
 """
@@ -53,26 +52,8 @@ def _rag_ws_url() -> str:
     return f"{_http_to_ws(BACKEND_URL)}/rag/query/ws"
 
 
-def _format_status_block(msg: dict) -> str:
-    phase = str(msg.get("phase") or "").strip()
-    message = str(msg.get("message") or "").strip()
-    rnd = msg.get("round")
-    if rnd is None:
-        rnd = msg.get("round_number")
-    tool = msg.get("tool")
-    head_parts: list[str] = []
-    if phase:
-        head_parts.append(f"**{phase}**")
-    if rnd is not None:
-        head_parts.append(f"round {rnd}")
-    if tool:
-        head_parts.append(f"`{tool}`")
-    head = " · ".join(head_parts)
-    if head and message:
-        return f"{head}\n\n{message}"
-    if message:
-        return message
-    return head or "—"
+def _format_status_line(message: str) -> str:
+    return f"*Current:* {message}"
 
 
 def _render_reference_label(item: dict) -> str:
@@ -99,17 +80,11 @@ def _render_sources(sources: list[dict]) -> str:
 
 
 def _run_query(question: str):
-    """Stream status into the right column; answer streams below status; quotes/sources fill the bottom row."""
-    yield ("", "", "", "", gr.update(interactive=False))
+    """Right panel: latest status only (replacing); switches to streamed answer on first delta; statuses stop updating."""
+    yield ("", "", "", gr.update(interactive=False))
     q = (question or "").strip()
     if not q:
-        yield (
-            "",
-            "*Enter a question on the left and press Ask.*",
-            "",
-            "",
-            gr.update(interactive=True),
-        )
+        yield ("*Enter a question on the left and press Ask.*", "", "", gr.update(interactive=True))
         return
 
     ws: websocket.WebSocket | None = None
@@ -119,15 +94,9 @@ def _run_query(question: str):
         ws.settimeout(_WS_RECV_TIMEOUT_SEC)
         ws.send(json.dumps({"question": q}))
 
-        yield (
-            "",
-            "*Waiting for the model…*",
-            "",
-            "",
-            gr.update(interactive=False),
-        )
+        yield ("*Waiting…*", "", "", gr.update(interactive=False))
 
-        status_blocks: list[str] = []
+        answer_mode = False
         accumulated_answer = ""
 
         while True:
@@ -137,65 +106,29 @@ def _run_query(question: str):
             msg = json.loads(raw)
             mtype = msg.get("type")
             if mtype == RagWsEventType.STATUS:
-                status_blocks.append(_format_status_block(msg))
-                status_md = "\n\n---\n\n".join(status_blocks)
-                yield (
-                    status_md,
-                    accumulated_answer or "*…*",
-                    gr.skip(),
-                    gr.skip(),
-                    gr.update(interactive=False),
-                )
+                if not answer_mode:
+                    line = _format_status_line(str(msg.get("message") or ""))
+                    yield (line, gr.skip(), gr.skip(), gr.update(interactive=False))
             elif mtype == RagWsEventType.ANSWER_DELTA:
+                answer_mode = True
                 accumulated_answer += str(msg.get("text") or "")
-                yield (
-                    "\n\n---\n\n".join(status_blocks) if status_blocks else "",
-                    accumulated_answer,
-                    gr.skip(),
-                    gr.skip(),
-                    gr.update(interactive=False),
-                )
+                yield (accumulated_answer, gr.skip(), gr.skip(), gr.update(interactive=False))
             elif mtype == RagWsEventType.RESULT:
                 answer = str(msg.get("answer") or "")
                 quotes = msg.get("quotes") or []
                 sources = msg.get("sources") or []
                 quotes_text = _render_quotes(quotes) if quotes else ""
                 sources_text = _render_sources(sources) if sources else ""
-                status_final = "\n\n---\n\n".join(status_blocks) if status_blocks else ""
-                yield (
-                    status_final,
-                    answer,
-                    quotes_text,
-                    sources_text,
-                    gr.update(interactive=True),
-                )
+                yield (answer, quotes_text, sources_text, gr.update(interactive=True))
                 return
             elif mtype == RagWsEventType.ERROR:
                 err = str(msg.get("message") or "error")
-                yield (
-                    "\n\n---\n\n".join(status_blocks) if status_blocks else "",
-                    f"**Error:** {err}",
-                    "",
-                    "",
-                    gr.update(interactive=True),
-                )
+                yield (f"**Error:** {err}", "", "", gr.update(interactive=True))
                 return
     except TimeoutError:
-        yield (
-            "",
-            "**Error:** response timed out.",
-            "",
-            "",
-            gr.update(interactive=True),
-        )
+        yield ("**Error:** response timed out.", "", "", gr.update(interactive=True))
     except Exception as exc:
-        yield (
-            "",
-            f"**Error:** {exc}",
-            "",
-            "",
-            gr.update(interactive=True),
-        )
+        yield (f"**Error:** {exc}", "", "", gr.update(interactive=True))
     finally:
         if ws is not None:
             try:
@@ -218,10 +151,8 @@ with gr.Blocks(css=_UI_CSS, title="HIPAA RAG") as demo:
             submit = gr.Button("Ask", elem_classes=["yellow-ask"])
 
         with gr.Column(scale=1):
-            gr.Markdown("### Progress")
-            status_box = gr.Markdown(elem_classes=["panel-scroll"])
-            gr.Markdown("### Answer")
-            answer_box = gr.Markdown(elem_classes=["panel-scroll"])
+            gr.Markdown("### Output")
+            output_panel = gr.Markdown(elem_classes=["panel-scroll"])
 
     with gr.Row():
         with gr.Column(scale=1):
@@ -234,7 +165,7 @@ with gr.Blocks(css=_UI_CSS, title="HIPAA RAG") as demo:
     submit.click(
         _run_query,
         inputs=[question_input],
-        outputs=[status_box, answer_box, quotes_box, sources_box, submit],
+        outputs=[output_panel, quotes_box, sources_box, submit],
         show_progress="hidden",
     )
 
