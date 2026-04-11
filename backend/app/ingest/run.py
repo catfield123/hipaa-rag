@@ -2,6 +2,10 @@
 
 Run via ``python -m app.ingest.run`` (or the project’s ingest entrypoint) with database
 settings from the environment.
+
+Memory: retrieval rows are embedded and inserted in batches (default 64) with ``flush`` +
+``expunge_all`` to cap SQLAlchemy session growth. Tune with ``INGEST_DB_BATCH_SIZE`` and
+``INGEST_STRUCTURAL_BATCH_SIZE`` if the process is still RAM-heavy on small hosts.
 """
 
 from __future__ import annotations
@@ -9,7 +13,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
+import os
 import re
+import sys
 from pathlib import Path
 
 from app.config import get_settings
@@ -30,6 +37,28 @@ SUBPART_LABEL_RE = re.compile(r"^Subpart\s+([A-Z])(?:\s*-\s*(.*))?$", re.IGNOREC
 SECTION_LABEL_RE = re.compile(r"^§\s*(\d+\.\d+)\b(?:\s+(.*))?$")
 BM25_INDEX_NAME = "retrieval_chunks_search_text_bm25_idx"
 BM25_INDEX_SQL = BM25_INDEX_DDL.format(index_name=BM25_INDEX_NAME).strip()
+
+logger = logging.getLogger(__name__)
+
+# Bound ORM identity-map growth and peak embedding vectors during ingest (override via env).
+_DEFAULT_INGEST_DB_BATCH_SIZE = 64
+_DEFAULT_STRUCTURAL_BATCH_SIZE = 80
+
+
+def _ingest_db_batch_size() -> int:
+    raw = os.environ.get("INGEST_DB_BATCH_SIZE", str(_DEFAULT_INGEST_DB_BATCH_SIZE))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _DEFAULT_INGEST_DB_BATCH_SIZE
+
+
+def _structural_batch_size() -> int:
+    raw = os.environ.get("INGEST_STRUCTURAL_BATCH_SIZE", str(_DEFAULT_STRUCTURAL_BATCH_SIZE))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _DEFAULT_STRUCTURAL_BATCH_SIZE
 
 
 def _normalize_optional(value: object) -> str | None:
@@ -380,45 +409,84 @@ async def run_ingestion(
     """
 
     markdown, source_path = _load_markdown(markdown_path)
+    logger.info(
+        "Loaded markdown from %s (%d chars).",
+        source_path,
+        len(markdown),
+    )
 
     chunker = MarkdownChunker()
     embedding_service = EmbeddingService(use_fake_embeddings=fake_embeddings)
 
     chunks = chunker.chunk_markdown(markdown)
+    logger.info("Chunking done: %d retrieval chunks.", len(chunks))
     structural_content = _build_structural_content(chunks, source_path=source_path)
-    embeddings = await embedding_service.embed_texts([str(chunk["text"]) for chunk in chunks]) if chunks else []
+    logger.info("Structural rows to persist: %d.", len(structural_content))
+
+    chunk_batch = _ingest_db_batch_size()
+    if chunks:
+        logger.info(
+            "Will embed and insert %d chunks in batches of %d (fake_embeddings=%s).",
+            len(chunks),
+            chunk_batch,
+            fake_embeddings,
+        )
 
     async with SessionLocal() as session:
+        logger.info("Dropping BM25 index if present and clearing retrieval/structural tables...")
         await session.execute(
             text(DROP_INDEX_IF_EXISTS.format(index_name=BM25_INDEX_NAME)),
         )
         await session.execute(delete(StructuralContent))
         await session.execute(delete(RetrievalChunk))
 
-        for chunk, embedding in zip(chunks, embeddings, strict=True):
-            chunk_text = str(chunk["text"]).strip()
-            db_chunk = RetrievalChunk(
-                id=int(chunk["id"]),
-                path=[str(value) for value in chunk.get("path", [])],
-                path_text=str(chunk.get("path_text", "")),
-                text=chunk_text,
-                section=_normalize_optional(chunk.get("section")),
-                part=_normalize_optional(chunk.get("part")),
-                subpart=_normalize_optional(chunk.get("subpart")),
-                markers=[str(value) for value in chunk.get("markers", [])],
-                token_count=estimate_token_count(chunk_text),
-                metadata_json={
-                    "source_mode": "markdown",
-                    "source_path": source_path,
-                },
-                embedding=embedding,
+        for start in range(0, len(chunks), chunk_batch):
+            end = min(start + chunk_batch, len(chunks))
+            batch_chunks = chunks[start:end]
+            texts = [str(c["text"]) for c in batch_chunks]
+            logger.info(
+                "Embedding + inserting retrieval chunks %d–%d of %d...",
+                start + 1,
+                end,
+                len(chunks),
             )
-            session.add(db_chunk)
+            batch_embeddings = await embedding_service.embed_texts(texts)
+            for chunk, embedding in zip(batch_chunks, batch_embeddings, strict=True):
+                chunk_text = str(chunk["text"]).strip()
+                db_chunk = RetrievalChunk(
+                    id=int(chunk["id"]),
+                    path=[str(value) for value in chunk.get("path", [])],
+                    path_text=str(chunk.get("path_text", "")),
+                    text=chunk_text,
+                    section=_normalize_optional(chunk.get("section")),
+                    part=_normalize_optional(chunk.get("part")),
+                    subpart=_normalize_optional(chunk.get("subpart")),
+                    markers=[str(value) for value in chunk.get("markers", [])],
+                    token_count=estimate_token_count(chunk_text),
+                    metadata_json={
+                        "source_mode": "markdown",
+                        "source_path": source_path,
+                    },
+                    embedding=embedding,
+                )
+                session.add(db_chunk)
+            await session.flush()
+            session.expunge_all()
 
-        for structural_item in structural_content:
-            session.add(structural_item)
+        struct_batch = _structural_batch_size()
+        logger.info(
+            "Inserting %d structural rows (batch size %d)...",
+            len(structural_content),
+            struct_batch,
+        )
+        for s_start in range(0, len(structural_content), struct_batch):
+            s_end = min(s_start + struct_batch, len(structural_content))
+            for structural_item in structural_content[s_start:s_end]:
+                session.add(structural_item)
+            await session.flush()
+            session.expunge_all()
 
-        await session.flush()
+        logger.info("Recreating BM25 index...")
         await session.execute(text(BM25_INDEX_SQL))
 
         summary = IngestionSummary(
@@ -429,6 +497,7 @@ async def run_ingestion(
         )
         await session.commit()
 
+    logger.info("Ingestion committed successfully.")
     return IngestionResult(status="completed", summary=summary)
 
 
@@ -470,6 +539,17 @@ def main() -> None:
     Raises:
         Exception: Propagates failures from :func:`run_ingestion` or asyncio.
     """
+
+    log_level = os.environ.get("INGEST_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s %(levelname)s [ingest] %(message)s",
+        stream=sys.stderr,
+    )
+    if log_level != "DEBUG":
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logger.info("Starting ingestion CLI (log level=%s).", log_level)
 
     args = parse_args()
     result = asyncio.run(

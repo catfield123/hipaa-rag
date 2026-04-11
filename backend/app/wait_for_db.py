@@ -25,12 +25,19 @@ def main() -> None:
     dsn = settings.psycopg_connect_url
     last_error: Exception | None = None
 
-    for _ in range(30):
+    print("[wait_for_db] Polling PostgreSQL until a connection succeeds...", flush=True)
+
+    for attempt in range(30):
         try:
             with psycopg.connect(dsn, connect_timeout=3):
+                print("[wait_for_db] PostgreSQL is accepting connections.", flush=True)
                 return
         except Exception as exc:  # pragma: no cover - operational retry path
             last_error = exc
+            print(
+                f"[wait_for_db] attempt {attempt + 1}/30 failed: {exc!s}; retrying in 1s...",
+                flush=True,
+            )
             time.sleep(1)
 
     raise RuntimeError("Database did not become ready in time.") from last_error

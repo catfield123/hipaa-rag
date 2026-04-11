@@ -23,24 +23,29 @@ services:
       - .env
     depends_on:
       - db
-    command: >
-      sh -c "python -m app.wait_for_db &&
-             alembic upgrade head &&
-             uvicorn main:app --host 0.0.0.0 --port 8000"
 
   ingest:
     build:
       context: ./backend
     env_file:
       - .env
+    environment:
+      - PYTHONUNBUFFERED=1
     volumes:
       - ${FILTERED_MARKDOWN_SOURCE:-./filtered_markdown.md}:/data/filtered_markdown.md:ro
     depends_on:
       - db
-    command: >
-      sh -c "python -m app.wait_for_db &&
-             alembic upgrade head &&
-             python -m app.ingest.run"
+    command:
+      - sh
+      - -exc
+      - |
+        echo "[ingest] step 1/3: waiting for PostgreSQL..."
+        python -u -m app.wait_for_db
+        echo "[ingest] step 2/3: alembic upgrade head"
+        alembic upgrade head
+        echo "[ingest] step 3/3: python -m app.ingest.run"
+        python -u -m app.ingest.run
+        echo "[ingest] finished successfully"
 
   frontend:
     build:
