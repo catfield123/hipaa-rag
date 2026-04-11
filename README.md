@@ -34,7 +34,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/demonstration.gif" width=640 />
+  <img src="assets/demonstration.gif" width=980 />
 </p>
 
 ## Contents
