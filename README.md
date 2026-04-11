@@ -174,7 +174,7 @@ docker compose up -d backend frontend nginx
 1. Reserve a static hostname in ngrok; set `NGROK_AUTHTOKEN` and `NGROK_URL` in `.env`.
 2. After ingest, include ngrok in the stack:  
    `docker compose up -d db backend frontend nginx ngrok`  
-   or `docker compose up -d` if every service is defined in your Compose file.
+   or `docker compose up -d`.
 3. UI: `https://<NGROK_URL>/` · HTTP API: `https://<NGROK_URL>/api/…` · WebSocket from the browser: `wss://<NGROK_URL>/api/rag/query/ws`.
 
 Default `BACKEND_URL=http://nginx/api` stays correct: Gradio calls nginx inside the Compose network; ngrok only fronts nginx for external clients.
