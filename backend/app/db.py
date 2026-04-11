@@ -21,7 +21,17 @@ SessionLocal = async_sessionmaker(
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
-    """Yield an async SQLAlchemy session for request-scoped dependencies."""
+    """Yield an async SQLAlchemy session for request-scoped dependencies.
+
+    Args:
+        None
+
+    Yields:
+        AsyncSession: Session bound to :data:`SessionLocal`; closed after the request or WS handler.
+
+    Raises:
+        None
+    """
 
     async with SessionLocal() as session:
         yield session

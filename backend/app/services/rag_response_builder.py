@@ -10,7 +10,17 @@ class RagResponseBuilder:
     """Build quotes and sources from full ranked retrieval evidence."""
 
     def build_quotes(self, evidence: list[RetrievalEvidence]) -> list[QuoteSpan]:
-        """Return one quote span per unique chunk, in evidence order."""
+        """Return one quote span per unique chunk, in evidence order.
+
+        Args:
+            evidence (list[RetrievalEvidence]): Merged retrieval hits (may contain duplicate chunk ids).
+
+        Returns:
+            list[QuoteSpan]: Deduplicated quote rows preserving first-seen order.
+
+        Raises:
+            None
+        """
 
         quotes: list[QuoteSpan] = []
         seen_chunk_ids: set[int] = set()
@@ -33,7 +43,17 @@ class RagResponseBuilder:
         return quotes
 
     def build_sources(self, evidence: list[RetrievalEvidence]) -> list[SourceItem]:
-        """Return one source row per unique chunk, aligned with ``build_quotes``."""
+        """Return one source row per unique chunk, aligned with ``build_quotes``.
+
+        Args:
+            evidence (list[RetrievalEvidence]): Same evidence list used for quotes.
+
+        Returns:
+            list[SourceItem]: Deduplicated source rows aligned with ``build_quotes`` chunk order.
+
+        Raises:
+            None
+        """
 
         sources: list[SourceItem] = []
         seen_chunk_ids: set[int] = set()

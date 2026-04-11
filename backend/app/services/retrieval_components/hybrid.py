@@ -15,7 +15,7 @@ from app.services.retrieval_components.bm25 import BM25Service
 
 
 class HybridRetriever:
-    """Run hybrid retrieval using BM25, dense search, and RRF fusion."""
+    """Fuse BM25 and dense rankings with reciprocal rank fusion (RRF); falls back to BM25 without API key."""
 
     def __init__(
         self,
@@ -24,6 +24,20 @@ class HybridRetriever:
         embedding_service: EmbeddingService,
         bm25_service: BM25Service,
     ) -> None:
+        """Wire settings and shared services for hybrid search.
+
+        Args:
+            settings (Settings): App settings (limits, RRF ``k``, API key presence).
+            embedding_service (EmbeddingService): Embeds the query for the dense leg.
+            bm25_service (BM25Service): Shared BM25 service (index name, search path).
+
+        Returns:
+            None
+
+        Raises:
+            None
+        """
+
         self.settings = settings
         self.embedding_service = embedding_service
         self.bm25_service = bm25_service
@@ -36,7 +50,21 @@ class HybridRetriever:
         limit: int,
         filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
-        """Return chunk evidence ranked by hybrid reciprocal-rank fusion."""
+        """Return chunk evidence ranked by RRF over BM25 and dense lists (BM25-only if no OpenAI key).
+
+        Args:
+            session (AsyncSession): Async SQLAlchemy session.
+            query_text (str): Query text for both BM25 and embedding legs.
+            limit (int): Maximum fused rows to return.
+            filters (StructuralFilters | None): Structural filters applied to both legs.
+
+        Returns:
+            list[RetrievalEvidence]: Fused hits with ``retrieval_mode`` ``hybrid`` and per-leg scores in metadata.
+
+        Raises:
+            ConfigurationError: If embeddings are required but misconfigured (from the embedding service).
+            sqlalchemy.exc.SQLAlchemyError: On database errors.
+        """
 
         if not self.settings.openai_api_key:
             return await self.bm25_service.search(

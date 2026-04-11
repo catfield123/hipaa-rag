@@ -3,45 +3,49 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated
+import logging
+from typing import Any
 
-from fastapi import APIRouter, Depends, WebSocket
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, WebSocket
+from pydantic import ValidationError
+from starlette.websockets import WebSocketDisconnect
 
-from app.db import SessionLocal, get_db_session
+from app.api.deps import (
+    AnsweringServiceDep,
+    Bm25ServiceDep,
+    DbSessionDep,
+    DenseRetrieverDep,
+    HybridRetrieverDep,
+    RagResponseBuilderDep,
+    StructuralRetrieverDep,
+)
+from app.core.exceptions import AppError
 from app.schemas.chat import ChatQueryRequest, ChatQueryResponse
-from app.services.answering import AnsweringService
-from app.services.dependencies import get_answering_service, get_rag_response_builder
-from app.services.rag_response_builder import RagResponseBuilder
-from app.services.retrieval_components import (
-    BM25Service,
-    DenseRetriever,
-    HybridRetriever,
-    StructuralContentRetriever,
+from app.schemas.ws_events import (
+    WsAnswerDeltaEvent,
+    WsErrorEvent,
+    WsStatusEvent,
+    ws_result_event_payload,
 )
-from app.services.retrieval_components.dependencies import (
-    get_bm25_service,
-    get_dense_retriever,
-    get_hybrid_retriever,
-    get_structural_content_retriever,
+from app.services.rag_query_runner import run_rag_query
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(
+    prefix="/rag",
+    tags=["rag"],
 )
 
-router = APIRouter(prefix="/rag", tags=["rag"])
-DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
-Bm25ServiceDep = Annotated[BM25Service, Depends(get_bm25_service)]
-DenseRetrieverDep = Annotated[DenseRetriever, Depends(get_dense_retriever)]
-HybridRetrieverDep = Annotated[HybridRetriever, Depends(get_hybrid_retriever)]
-StructuralRetrieverDep = Annotated[
-    StructuralContentRetriever,
-    Depends(get_structural_content_retriever),
-]
 
-
-AnsweringServiceDep = Annotated[AnsweringService, Depends(get_answering_service)]
-RagResponseBuilderDep = Annotated[RagResponseBuilder, Depends(get_rag_response_builder)]
-
-
-@router.post("/query")
+@router.post(
+    "/query",
+    response_model=ChatQueryResponse,
+    summary="Run RAG query",
+    description=(
+        "Runs the retrieval and function-calling agent, then returns the answer with "
+        "quotes, sources, inferred intent, and retrieval round count."
+    ),
+)
 async def query_rag(
     payload: ChatQueryRequest,
     session: DbSessionDep,
@@ -52,87 +56,126 @@ async def query_rag(
     hybrid_retriever: HybridRetrieverDep,
     structural_retriever: StructuralRetrieverDep,
 ) -> ChatQueryResponse:
-    """Run the retrieval loop and return the RAG response payload."""
+    """Run the retrieval loop and return the RAG response payload.
 
-    outcome = await answering_service.answer_question(
+    Args:
+        payload (ChatQueryRequest): Validated request body with the user question.
+        session (AsyncSession): Request-scoped database session.
+        answering_service (AnsweringService): Agent service.
+        rag_response_builder (RagResponseBuilder): Maps evidence to client quote/source lists.
+        bm25_service (BM25Service): BM25 backend.
+        dense_retriever (DenseRetriever): Dense retrieval backend.
+        hybrid_retriever (HybridRetriever): Hybrid retrieval backend.
+        structural_retriever (StructuralContentRetriever): Structural lookup backend.
+
+    Returns:
+        ChatQueryResponse: Answer, quotes, sources, intent, and retrieval rounds.
+
+    Raises:
+        ConfigurationError: If required API configuration is missing.
+        RuntimeError: If the agent cannot complete a retrieval round as required.
+    """
+
+    return await run_rag_query(
         question=payload.question,
         session=session,
+        answering_service=answering_service,
+        rag_response_builder=rag_response_builder,
         bm25_service=bm25_service,
         dense_retriever=dense_retriever,
         hybrid_retriever=hybrid_retriever,
         structural_retriever=structural_retriever,
     )
 
-    return ChatQueryResponse(
-        answer=outcome.answer,
-        quotes=rag_response_builder.build_quotes(outcome.evidence),
-        sources=rag_response_builder.build_sources(outcome.evidence),
-        intent=outcome.intent,
-        retrieval_rounds=outcome.retrieval_rounds,
-    )
-
 
 @router.websocket("/query/ws")
-async def query_rag_ws(websocket: WebSocket) -> None:
-    """Stream agent status updates over WebSocket, then return the same payload as POST /rag/query."""
+async def query_rag_ws(
+    websocket: WebSocket,
+    session: DbSessionDep,
+    answering_service: AnsweringServiceDep,
+    rag_response_builder: RagResponseBuilderDep,
+    bm25_service: Bm25ServiceDep,
+    dense_retriever: DenseRetrieverDep,
+    hybrid_retriever: HybridRetrieverDep,
+    structural_retriever: StructuralRetrieverDep,
+) -> None:
+    """Stream agent status and answer deltas, then send the same payload as ``POST /rag/query``.
+
+    The client must send a single text frame containing JSON: ``{\"question\": \"...\"}``
+    (same shape as :class:`ChatQueryRequest`).
+
+    Args:
+        websocket (WebSocket): Accepted browser/client connection.
+        session (AsyncSession): Database session for the lifetime of the handler.
+        answering_service (AnsweringService): Shared answering service.
+        rag_response_builder (RagResponseBuilder): Response assembler.
+        bm25_service (BM25Service): BM25 backend.
+        dense_retriever (DenseRetriever): Dense retrieval backend.
+        hybrid_retriever (HybridRetriever): Hybrid retrieval backend.
+        structural_retriever (StructuralContentRetriever): Structural lookup backend.
+
+    Returns:
+        None: Connection is closed after a ``result`` or ``error`` message.
+
+    Raises:
+        None: Errors are sent as ``type: error`` JSON and the socket is closed with an appropriate code.
+    """
 
     await websocket.accept()
     try:
         raw = await websocket.receive_text()
-    except Exception:
-        await websocket.close(code=1008)
+    except WebSocketDisconnect:
         return
 
     try:
-        payload = json.loads(raw)
+        payload_obj = json.loads(raw)
     except json.JSONDecodeError:
-        await websocket.send_json({"type": "error", "message": "Expected JSON with a question field."})
+        err = WsErrorEvent(message="Expected JSON with a question field.")
+        await websocket.send_json(err.model_dump(mode="json"))
         await websocket.close(code=1007)
         return
 
     try:
-        request = ChatQueryRequest.model_validate(payload)
-    except Exception as exc:
-        await websocket.send_json({"type": "error", "message": str(exc)})
+        request = ChatQueryRequest.model_validate(payload_obj)
+    except ValidationError as exc:
+        err = WsErrorEvent(message=str(exc))
+        await websocket.send_json(err.model_dump(mode="json"))
         await websocket.close(code=1007)
         return
 
-    answering_service = get_answering_service()
-    rag_response_builder = get_rag_response_builder()
-    bm25_service = get_bm25_service()
-    dense_retriever = get_dense_retriever()
-    hybrid_retriever = get_hybrid_retriever()
-    structural_retriever = get_structural_content_retriever()
-
-    async def on_status(event: dict) -> None:
-        await websocket.send_json(event)
+    async def on_status(event: dict[str, Any]) -> None:
+        validated = WsStatusEvent.model_validate(event)
+        await websocket.send_json(validated.model_dump(mode="json", by_alias=True))
 
     async def on_answer_delta(text: str) -> None:
-        await websocket.send_json({"type": "answer_delta", "text": text})
+        msg = WsAnswerDeltaEvent(text=text)
+        await websocket.send_json(msg.model_dump(mode="json"))
 
     try:
-        async with SessionLocal() as session:
-            outcome = await answering_service.answer_question(
-                question=request.question,
-                session=session,
-                bm25_service=bm25_service,
-                dense_retriever=dense_retriever,
-                hybrid_retriever=hybrid_retriever,
-                structural_retriever=structural_retriever,
-                on_status=on_status,
-                on_answer_delta=on_answer_delta,
-            )
-    except Exception as exc:
-        await websocket.send_json({"type": "error", "message": str(exc)})
+        response = await run_rag_query(
+            question=request.question,
+            session=session,
+            answering_service=answering_service,
+            rag_response_builder=rag_response_builder,
+            bm25_service=bm25_service,
+            dense_retriever=dense_retriever,
+            hybrid_retriever=hybrid_retriever,
+            structural_retriever=structural_retriever,
+            on_status=on_status,
+            on_answer_delta=on_answer_delta,
+        )
+    except AppError as exc:
+        logger.warning("RAG WebSocket app error: %s", exc.message)
+        err = WsErrorEvent(message=exc.message)
+        await websocket.send_json(err.model_dump(mode="json"))
+        await websocket.close(code=exc.ws_close_code)
+        return
+    except Exception:
+        logger.exception("RAG WebSocket internal error")
+        err = WsErrorEvent(message="An internal error occurred.")
+        await websocket.send_json(err.model_dump(mode="json"))
         await websocket.close(code=1011)
         return
 
-    response = ChatQueryResponse(
-        answer=outcome.answer,
-        quotes=rag_response_builder.build_quotes(outcome.evidence),
-        sources=rag_response_builder.build_sources(outcome.evidence),
-        intent=outcome.intent,
-        retrieval_rounds=outcome.retrieval_rounds,
-    )
-    await websocket.send_json({"type": "result", **response.model_dump(mode="json")})
+    await websocket.send_json(ws_result_event_payload(response))
     await websocket.close(code=1000)

@@ -13,9 +13,21 @@ from app.services.embeddings import EmbeddingService
 
 
 class DenseRetriever:
-    """Run dense pgvector retrieval against chunk embeddings."""
+    """Run dense pgvector cosine-distance retrieval against chunk embeddings."""
 
     def __init__(self, *, embedding_service: EmbeddingService) -> None:
+        """Create a dense retriever using the shared embedding service.
+
+        Args:
+            embedding_service (EmbeddingService): Service used to embed the query string.
+
+        Returns:
+            None
+
+        Raises:
+            None
+        """
+
         self.embedding_service = embedding_service
 
     async def search(
@@ -26,7 +38,21 @@ class DenseRetriever:
         limit: int,
         filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
-        """Return chunk evidence ranked by vector similarity."""
+        """Return chunk evidence ranked by embedding cosine distance (converted to a similarity-like score).
+
+        Args:
+            session (AsyncSession): Async SQLAlchemy session.
+            query_text (str): Natural-language query to embed.
+            limit (int): Maximum rows to return.
+            filters (StructuralFilters | None): Optional structural filters.
+
+        Returns:
+            list[RetrievalEvidence]: Rows with ``retrieval_mode`` ``dense`` and scores in ``[0, 1]``.
+
+        Raises:
+            ConfigurationError: If embeddings require OpenAI and the API key is missing.
+            sqlalchemy.exc.SQLAlchemyError: On database errors.
+        """
 
         query_embedding = await self.embedding_service.embed_query(query_text)
         distance = RetrievalChunk.embedding.cosine_distance(query_embedding)

@@ -1,3 +1,9 @@
+"""Chunk filtered HIPAA markdown, compute embeddings, and persist retrieval + structural rows.
+
+Run via ``python -m app.ingest.run`` (or the project’s ingest entrypoint) with database
+settings from the environment.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -30,6 +36,18 @@ WITH (text_config = 'english')
 """
 
 def _normalize_optional(value: object) -> str | None:
+    """Convert an arbitrary chunk field to stripped ``str`` or ``None`` if empty.
+
+    Args:
+        value (object): Raw value from chunk dict (often ``str``).
+
+    Returns:
+        str | None: Stripped string, or ``None`` when missing/blank.
+
+    Raises:
+        None
+    """
+
     if value is None:
         return None
     normalized = str(value).strip()
@@ -37,6 +55,19 @@ def _normalize_optional(value: object) -> str | None:
 
 
 def _load_markdown(markdown_path: str | None) -> tuple[str, str]:
+    """Read UTF-8 markdown from ``markdown_path`` or :attr:`Settings.filtered_markdown_path`.
+
+    Args:
+        markdown_path (str | None): Explicit path override, or ``None`` for settings default.
+
+    Returns:
+        tuple[str, str]: ``(file_contents, resolved_path_str)``.
+
+    Raises:
+        FileNotFoundError: If the resolved path does not exist.
+        OSError: If the file cannot be read.
+    """
+
     settings = get_settings()
     source_path = Path(markdown_path or settings.filtered_markdown_path)
     if not source_path.exists():
@@ -45,6 +76,18 @@ def _load_markdown(markdown_path: str | None) -> tuple[str, str]:
 
 
 def _parse_part_label(label: str | None) -> tuple[str | None, str | None]:
+    """Parse ``PART …`` label text into part number and optional title.
+
+    Args:
+        label (str | None): Label from a chunk ``part`` field.
+
+    Returns:
+        tuple[str | None, str | None]: ``(part_number, title)`` or ``(None, None)`` when unmatched.
+
+    Raises:
+        None
+    """
+
     if not label:
         return None, None
     match = PART_LABEL_RE.match(label.strip())
@@ -54,6 +97,18 @@ def _parse_part_label(label: str | None) -> tuple[str | None, str | None]:
 
 
 def _parse_subpart_label(label: str | None) -> tuple[str | None, str | None]:
+    """Parse ``Subpart …`` label text into letter key and optional title.
+
+    Args:
+        label (str | None): Label from a chunk ``subpart`` field.
+
+    Returns:
+        tuple[str | None, str | None]: ``(subpart_key_upper, title)`` or ``(None, None)``.
+
+    Raises:
+        None
+    """
+
     if not label:
         return None, None
     match = SUBPART_LABEL_RE.match(label.strip())
@@ -63,6 +118,18 @@ def _parse_subpart_label(label: str | None) -> tuple[str | None, str | None]:
 
 
 def _parse_section_label(label: str | None) -> tuple[str | None, str | None]:
+    """Parse ``§ x.y …`` section heading into section number and title.
+
+    Args:
+        label (str | None): Label from a chunk ``section`` field.
+
+    Returns:
+        tuple[str | None, str | None]: ``(section_number, title)`` or ``(None, None)``.
+
+    Raises:
+        None
+    """
+
     if not label:
         return None, None
     match = SECTION_LABEL_RE.match(label.strip())
@@ -72,6 +139,18 @@ def _parse_section_label(label: str | None) -> tuple[str | None, str | None]:
 
 
 def _join_outline_lines(lines: list[str]) -> str:
+    """Join outline lines while preserving intentional blank lines between blocks.
+
+    Args:
+        lines (list[str]): Outline fragments (part/subpart/section headings).
+
+    Returns:
+        str: Single multi-line string for ``StructuralContent.text``.
+
+    Raises:
+        None
+    """
+
     compact: list[str] = []
     for line in lines:
         normalized = line.rstrip()
@@ -90,6 +169,19 @@ def _build_structural_content(
     *,
     source_path: str,
 ) -> list[StructuralContent]:
+    """Derive section text, subpart outlines, and part outlines from chunked markdown records.
+
+    Args:
+        chunks (list[dict[str, object]]): Output of :meth:`MarkdownChunker.chunk_markdown`.
+        source_path (str): Provenance path stored in ``metadata_json``.
+
+    Returns:
+        list[StructuralContent]: Rows to insert alongside ``RetrievalChunk`` rows.
+
+    Raises:
+        None
+    """
+
     section_groups: dict[str, dict[str, object]] = {}
     subpart_groups: dict[tuple[str | None, str], dict[str, object]] = {}
     part_groups: dict[str, dict[str, object]] = {}
@@ -270,6 +362,21 @@ async def run_ingestion(
     fake_embeddings: bool = False,
     markdown_path: str | None = None,
 ) -> IngestionResult:
+    """Chunk markdown, embed texts, replace retrieval tables, and recreate the BM25 index.
+
+    Args:
+        fake_embeddings (bool): Use deterministic fake vectors instead of calling OpenAI.
+        markdown_path (str | None): Optional path to markdown; defaults to settings.
+
+    Returns:
+        IngestionResult: Completion status and summary counts.
+
+    Raises:
+        FileNotFoundError: If markdown cannot be loaded.
+        ConfigurationError: If embeddings require an API key and ``fake_embeddings`` is ``False``.
+        sqlalchemy.exc.SQLAlchemyError: On database errors during the transaction.
+    """
+
     markdown, source_path = _load_markdown(markdown_path)
 
     chunker = MarkdownChunker()
@@ -322,6 +429,18 @@ async def run_ingestion(
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI flags for the ingestion script.
+
+    Args:
+        None
+
+    Returns:
+        argparse.Namespace: Parsed arguments (``fake_embeddings``, ``markdown_path``).
+
+    Raises:
+        SystemExit: If argparse validation fails (standard library behavior).
+    """
+
     parser = argparse.ArgumentParser(description="Ingest HIPAA source data into the database.")
     parser.add_argument(
         "--fake-embeddings",
@@ -336,6 +455,18 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """CLI entry: run :func:`run_ingestion` and print JSON summary to stdout.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        Exception: Propagates failures from :func:`run_ingestion` or asyncio.
+    """
+
     args = parse_args()
     result = asyncio.run(
         run_ingestion(

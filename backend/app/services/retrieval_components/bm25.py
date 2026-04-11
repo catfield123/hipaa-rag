@@ -14,7 +14,7 @@ from app.services.chunk_contract import build_retrieval_evidence, build_structur
 
 
 class BM25Service:
-    """Run lexical BM25 retrieval against indexed chunk text."""
+    """Run lexical BM25 retrieval against indexed chunk ``search_text`` (pg_textsearch)."""
 
     index_name: ClassVar[str] = "retrieval_chunks_search_text_bm25_idx"
 
@@ -25,7 +25,20 @@ class BM25Service:
         limit: int,
         filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
-        """Return chunk evidence ranked by BM25 lexical relevance."""
+        """Return chunk evidence ranked by BM25 lexical relevance.
+
+        Args:
+            session (AsyncSession): Async SQLAlchemy session.
+            query_text (str): User or model query; empty/whitespace returns no rows.
+            limit (int): Maximum hits to return after scoring.
+            filters (StructuralFilters | None): Optional structural filters merged into the SQL ``WHERE`` clause.
+
+        Returns:
+            list[RetrievalEvidence]: Up to ``limit`` evidence rows with mode ``bm25_only``.
+
+        Raises:
+            sqlalchemy.exc.SQLAlchemyError: On database errors.
+        """
 
         if not query_text.strip():
             return []

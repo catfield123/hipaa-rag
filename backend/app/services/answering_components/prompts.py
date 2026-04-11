@@ -73,7 +73,6 @@ FINAL_ANSWER_SYSTEM_PROMPT = (
     "and quote only what was provided."
 )
 
-# Extra constraints when the planner classified the question as asking for quotes / verbatim regulation text.
 FINAL_ANSWER_QUOTE_REQUEST_SUPPLEMENT = (
     "The user asked for verbatim regulatory text (citation / quote request). "
     "For each relevant row in the supplied JSON, show the `path_text` (or section plus markers) then the full `text` field "
@@ -82,6 +81,7 @@ FINAL_ANSWER_QUOTE_REQUEST_SUPPLEMENT = (
     "If an excerpt does not contain the full rule, say so in user-facing language after quoting what was provided "
     "(without calling it 'evidence' or 'the database')."
 )
+
 
 def build_retrieval_round_messages(
     *,
@@ -93,7 +93,23 @@ def build_retrieval_round_messages(
     broad_query_min: int,
     max_queries: int,
 ) -> list[dict[str, str]]:
-    """Build messages for one retrieval round."""
+    """Assemble chat messages for one retrieval round (system + user with context JSON).
+
+    Args:
+        question (str): End-user question text.
+        evidence (list[dict[str, Any]]): Serialized evidence accumulated so far.
+        retrieval_history (list[dict[str, object]]): Prior tool calls and outcomes.
+        prior_decision (dict[str, Any] | None): Last research decision, if any.
+        round_number (int): 1-based round index.
+        broad_query_min (int): Minimum broad queries suggested in the user prompt.
+        max_queries (int): Maximum tool calls allowed this round.
+
+    Returns:
+        list[dict[str, str]]: OpenAI ``messages`` payload (roles ``system`` / ``user``).
+
+    Raises:
+        None
+    """
 
     return [
         {"role": "system", "content": FUNCTION_AGENT_SYSTEM_PROMPT},
@@ -123,7 +139,19 @@ def build_research_decision_messages(
     evidence: list[dict[str, Any]],
     round_number: int,
 ) -> list[dict[str, str]]:
-    """Build messages for the decision step after one retrieval round."""
+    """Assemble chat messages for the ``decide_research_status`` tool call after a retrieval round.
+
+    Args:
+        question (str): End-user question text.
+        evidence (list[dict[str, Any]]): Evidence from rounds up to and including this step.
+        round_number (int): Round index just completed.
+
+    Returns:
+        list[dict[str, str]]: OpenAI ``messages`` for the decision-only completion.
+
+    Raises:
+        None
+    """
 
     return [
         {"role": "system", "content": RESEARCH_DECISION_SYSTEM_PROMPT},
@@ -142,11 +170,20 @@ def build_research_decision_messages(
 
 
 def _final_answer_system_content(decision: dict[str, Any]) -> str:
-    """Compose system prompt; add stricter citation rules for quote-style intents."""
+    """Choose the final-answer system prompt, appending quote rules for ``quote_request`` intent.
+
+    Args:
+        decision (dict[str, Any]): Serialized :class:`~app.schemas.planning.ResearchDecision` (includes ``intent``).
+
+    Returns:
+        str: Full system prompt string for the final completion.
+
+    Raises:
+        None
+    """
 
     content = FINAL_ANSWER_SYSTEM_PROMPT
     intent = decision.get("intent")
-    # StrEnum compares equal to its value string, so this works for model_dump() and plain JSON.
     if intent == QueryIntentEnum.QUOTE_REQUEST:
         content = f"{content}\n\n{FINAL_ANSWER_QUOTE_REQUEST_SUPPLEMENT}"
     return content
@@ -158,7 +195,19 @@ def build_final_answer_messages(
     evidence: list[dict[str, Any]],
     decision: dict[str, Any],
 ) -> list[dict[str, str]]:
-    """Build messages for final answer generation."""
+    """Assemble chat messages for the final natural-language answer (grounded in JSON excerpts).
+
+    Args:
+        question (str): End-user question text.
+        evidence (list[dict[str, Any]]): Serialized retrieval evidence rows.
+        decision (dict[str, Any]): Research decision payload (intent, structure flags, etc.).
+
+    Returns:
+        list[dict[str, str]]: OpenAI ``messages`` for non-streaming or streaming final completion.
+
+    Raises:
+        None
+    """
 
     return [
         {"role": "system", "content": _final_answer_system_content(decision)},
@@ -178,7 +227,17 @@ def build_final_answer_messages(
 
 
 def _build_supported_sections(evidence: list[dict[str, Any]]) -> list[str]:
-    """Extract unique section labels already present in the evidence payload."""
+    """Collect unique section labels from evidence ``section`` and ``path_text`` fields.
+
+    Args:
+        evidence (list[dict[str, Any]]): Evidence dicts (typically ``model_dump()`` shapes).
+
+    Returns:
+        list[str]: De-duplicated labels in first-seen order.
+
+    Raises:
+        None
+    """
 
     sections = []
     seen: set[str] = set()

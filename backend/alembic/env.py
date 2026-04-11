@@ -1,3 +1,5 @@
+"""Alembic environment: loads SQLAlchemy metadata from :mod:`app.models` and runs migrations."""
+
 from logging.config import fileConfig
 
 from alembic import context
@@ -18,6 +20,18 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
+    """Run migrations in offline mode (SQL script generation without a live connection).
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        None
+    """
+
     context.configure(
         url=settings.alembic_database_url,
         target_metadata=target_metadata,
@@ -30,6 +44,18 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    """Run migrations in online mode against the configured synchronous engine.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: On connection or migration failures.
+    """
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

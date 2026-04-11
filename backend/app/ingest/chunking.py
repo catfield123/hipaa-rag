@@ -9,7 +9,7 @@ from typing import Any
 
 
 class MarkdownChunker:
-    """Split normalized HIPAA markdown into retrieval chunks."""
+    """Split normalized HIPAA markdown into structured retrieval chunks (dict records)."""
 
     PART_RE = re.compile(r"^PART\s+(\d{3})(?:\s*[-\s]?\s*(.*))?$", re.IGNORECASE)
     SUBPART_RE = re.compile(r"^Subpart\s+([A-Z])(?:[-\s]+)(.*)")
@@ -19,7 +19,18 @@ class MarkdownChunker:
     FR_RE = re.compile(r"^\[\d{2,}\s+FR.*\]$")
 
     def chunk_markdown(self, src: str | list[str]) -> list[dict[str, Any]]:
-        """Chunk markdown text or lines into structured retrieval records."""
+        """Chunk markdown text or pre-split lines into structured retrieval records.
+
+        Args:
+            src (str | list[str]): Full markdown string or list of lines (e.g. without trailing newlines).
+
+        Returns:
+            list[dict[str, Any]]: Chunk dicts with ``path``, ``path_text``, ``text``, ``section``, ``part``,
+                ``subpart``, ``markers``, and a 1-based integer ``id`` assigned after parsing.
+
+        Raises:
+            ValueError: If body text appears before the first ``§`` section header is established.
+        """
 
         lines = self._normalize_lines(src)
         chunks: list[dict[str, Any]] = []
@@ -142,7 +153,19 @@ class MarkdownChunker:
         *,
         output_path: str | Path | None = None,
     ) -> list[dict[str, Any]]:
-        """Load a markdown file, chunk it, and optionally persist the result."""
+        """Load a UTF-8 markdown file, chunk it, and optionally write JSON to disk.
+
+        Args:
+            markdown_path (str | Path): Input ``.md`` file path.
+            output_path (str | Path | None): If set, writes pretty-printed JSON chunks to this path.
+
+        Returns:
+            list[dict[str, Any]]: Same structure as :meth:`chunk_markdown`.
+
+        Raises:
+            OSError: If the markdown file cannot be read or ``output_path`` cannot be written.
+            ValueError: Propagated from :meth:`chunk_markdown` when the document structure is invalid.
+        """
 
         markdown_path = Path(markdown_path)
         markdown = markdown_path.read_text(encoding="utf-8")
@@ -155,7 +178,18 @@ class MarkdownChunker:
 
     @staticmethod
     def save_chunks(chunks: list[dict[str, Any]], output_path: str | Path) -> Path:
-        """Persist chunks as pretty-printed JSON."""
+        """Persist chunk dicts as UTF-8 JSON with indentation.
+
+        Args:
+            chunks (list[dict[str, Any]]): Records produced by :meth:`chunk_markdown`.
+            output_path (str | Path): Destination ``.json`` path.
+
+        Returns:
+            Path: Resolved output path.
+
+        Raises:
+            OSError: If the file cannot be written.
+        """
 
         output_path = Path(output_path)
         output_path.write_text(
@@ -166,12 +200,36 @@ class MarkdownChunker:
 
     @staticmethod
     def _normalize_lines(src: str | list[str]) -> list[str]:
+        """Normalize input into stripped logical lines without trailing newline characters.
+
+        Args:
+            src (str | list[str]): Raw markdown or iterable of line strings.
+
+        Returns:
+            list[str]: Lines suitable for the state machine in :meth:`chunk_markdown`.
+
+        Raises:
+            None
+        """
+
         if isinstance(src, str):
             return [line.rstrip() for line in src.splitlines()]
         return [str(line).rstrip("\n\r") for line in src]
 
     @staticmethod
     def _marker_kind(token: str) -> str:
+        """Classify a parenthetical marker token for ordering (list vs nested markers).
+
+        Args:
+            token (str): Inner marker text without parentheses.
+
+        Returns:
+            str: One of ``number``, ``upper``, ``roman``, ``lower``, or ``other``.
+
+        Raises:
+            None
+        """
+
         if token.isdigit():
             return "number"
         if len(token) == 1 and token.isupper():
@@ -184,6 +242,18 @@ class MarkdownChunker:
 
     @staticmethod
     def _marker_rank(kind: str) -> int:
+        """Return numeric rank for marker ``kind`` (lower rank closes before higher when unwinding).
+
+        Args:
+            kind (str): Value from :meth:`_marker_kind`.
+
+        Returns:
+            int: Rank used to compare nested markers.
+
+        Raises:
+            KeyError: If ``kind`` is not a known label (should not occur when paired with :meth:`_marker_kind`).
+        """
+
         return {
             "lower": 0,
             "number": 1,
@@ -194,9 +264,34 @@ class MarkdownChunker:
 
     @staticmethod
     def _is_terminal_chunk(text: str) -> bool:
+        """Return whether ``text`` already ends a sentence or clause for continuation heuristics.
+
+        Args:
+            text (str): Accumulated chunk text so far.
+
+        Returns:
+            bool: ``True`` if the last non-space character is a strong terminal punctuation or closing bracket.
+
+        Raises:
+            None
+        """
+
         return bool(text) and text.rstrip().endswith((".", ";", ":", "?", "!", "]"))
 
     def _is_continuation_line(self, line: str, previous_text: str) -> bool:
+        """Decide whether ``line`` continues the previous chunk instead of starting a new one.
+
+        Args:
+            line (str): Current trimmed line.
+            previous_text (str): Text accumulated in the active chunk.
+
+        Returns:
+            bool: ``True`` if the line should be appended to ``previous_text``.
+
+        Raises:
+            None
+        """
+
         stripped = line.strip()
         if not stripped:
             return False
@@ -223,6 +318,22 @@ class MarkdownChunker:
         section_label: str,
         markers: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        """Build one chunk dictionary with hierarchical ``path`` metadata.
+
+        Args:
+            text (str): Body text for this chunk (marker line or paragraph fragment).
+            part_label (str | None): Current PART line label, if any.
+            subpart_label (str | None): Current Subpart label, if any.
+            section_label (str): Current ``§`` section heading label.
+            markers (list[dict[str, Any]]): Active marker stack entries with ``marker``, ``value``, etc.
+
+        Returns:
+            dict[str, Any]: Chunk payload without ``id`` (assigned later).
+
+        Raises:
+            None
+        """
+
         path = [label for label in [part_label, subpart_label, section_label] if label]
         path.extend(marker["marker"] for marker in markers)
 

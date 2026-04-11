@@ -20,6 +20,18 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    """Create extensions, ``retrieval_chunks``, ``structural_content``, and BM25 index placeholder.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: If DDL fails.
+    """
+
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_textsearch")
 
@@ -80,6 +92,18 @@ def upgrade() -> None:
     op.create_index("ix_structural_content_section_number", "structural_content", ["section_number"])
 
 def downgrade() -> None:
+    """Drop indexes, tables, and extensions created in :func:`upgrade`.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: If DDL fails.
+    """
+
     op.drop_index("ix_structural_content_section_number", table_name="structural_content")
     op.drop_index("ix_structural_content_subpart_key", table_name="structural_content")
     op.drop_index("ix_structural_content_part_number", table_name="structural_content")

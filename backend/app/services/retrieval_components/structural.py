@@ -15,7 +15,7 @@ from app.services.chunk_contract import (
 
 
 class StructuralContentRetriever:
-    """Retrieve precomputed section and outline content."""
+    """Load precomputed section text and outline rows from ``structural_content``."""
 
     async def lookup(
         self,
@@ -25,7 +25,20 @@ class StructuralContentRetriever:
         limit: int,
         filters: StructuralFilters | None = None,
     ) -> list[RetrievalEvidence]:
-        """Return structural content matching the requested target and filters."""
+        """Return structural content rows for a target type and optional equality filters.
+
+        Args:
+            session (AsyncSession): Async SQLAlchemy session.
+            target (StructuralContentTargetEnum): Which structural artifact to fetch.
+            limit (int): Maximum rows (typically small for outlines).
+            filters (StructuralFilters | None): Part/section/subpart filters when applicable.
+
+        Returns:
+            list[RetrievalEvidence]: Evidence with ``retrieval_mode`` ``structure_lookup``.
+
+        Raises:
+            sqlalchemy.exc.SQLAlchemyError: On database errors.
+        """
 
         rows = (
             await session.execute(

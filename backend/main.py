@@ -1,3 +1,3 @@
-"""ASGI entrypoint for the HIPAA RAG backend."""
+"""ASGI entrypoint re-exporting the FastAPI ``app`` for uvicorn (``main:app``)."""
 
 from app.main import app

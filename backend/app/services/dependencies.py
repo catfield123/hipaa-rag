@@ -11,13 +11,33 @@ from app.services.rag_response_builder import RagResponseBuilder
 
 @lru_cache
 def get_rag_response_builder() -> RagResponseBuilder:
-    """Return the shared builder for public RAG responses."""
+    """Return the shared builder for public RAG responses.
+
+    Args:
+        None
+
+    Returns:
+        RagResponseBuilder: Singleton instance used to map evidence to quotes and sources.
+
+    Raises:
+        None
+    """
 
     return RagResponseBuilder()
 
 
 @lru_cache
 def get_answering_service() -> AnsweringService:
-    """Return the shared answering service."""
+    """Return the shared answering service.
+
+    Args:
+        None
+
+    Returns:
+        AnsweringService: Singleton wired with the process-wide OpenAI client.
+
+    Raises:
+        None
+    """
 
     return AnsweringService(client=get_openai_client())

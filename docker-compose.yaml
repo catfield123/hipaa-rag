@@ -19,12 +19,8 @@ services:
       context: ./backend
     container_name: hipaa_rag_backend
     restart: unless-stopped
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/hipaa_rag}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_CHAT_MODEL=${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
-      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1536}
+    env_file:
+      - .env
     depends_on:
       - db
     command: >
@@ -35,15 +31,10 @@ services:
   ingest:
     build:
       context: ./backend
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/hipaa_rag}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_CHAT_MODEL=${OPENAI_CHAT_MODEL:-gpt-4.1-mini}
-      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1536}
-      - FILTERED_MARKDOWN_PATH=/data/filtered_markdown.md
+    env_file:
+      - .env
     volumes:
-      - ${FILTERED_MARKDOWN_SOURCE:-/home/catfield123/Desktop/PDF_parser/filtered_markdown.md}:/data/filtered_markdown.md:ro
+      - ${FILTERED_MARKDOWN_SOURCE:-./filtered_markdown.md}:/data/filtered_markdown.md:ro
     depends_on:
       - db
     command: >

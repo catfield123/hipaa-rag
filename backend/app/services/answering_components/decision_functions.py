@@ -11,7 +11,17 @@ DECIDE_RESEARCH_STATUS_FUNCTION_NAME = "decide_research_status"
 
 
 def build_research_decision_functions() -> list[dict[str, Any]]:
-    """Return function schemas for the post-retrieval decision step."""
+    """Return OpenAI tool schemas for the post-retrieval ``decide_research_status`` step.
+
+    Args:
+        None
+
+    Returns:
+        list[dict[str, Any]]: A one-element list in OpenAI ``tools`` format.
+
+    Raises:
+        None
+    """
 
     return [
         {
@@ -52,7 +62,17 @@ def build_research_decision_functions() -> list[dict[str, Any]]:
 
 
 def extract_research_decision_payload(message: Any) -> dict[str, Any]:
-    """Extract decision arguments from a model function call."""
+    """Extract ``decide_research_status`` JSON arguments from a chat completion message.
+
+    Args:
+        message (Any): OpenAI ``message`` object with optional ``tool_calls``.
+
+    Returns:
+        dict[str, Any]: Parsed function arguments for :class:`~app.schemas.planning.ResearchDecision`.
+
+    Raises:
+        ValueError: If no matching tool call is present on ``message``.
+    """
 
     function_calls = getattr(message, "tool_calls", None) or []
     for function_call in function_calls:

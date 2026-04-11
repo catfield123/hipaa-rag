@@ -1,29 +1,22 @@
-"""Shared API and service-layer schemas for the HIPAA RAG backend."""
+"""Shared API and service-layer schemas for the HIPAA RAG backend.
+
+Re-exports chat, planning, retrieval, system, and types symbols for convenience imports
+(``from app.schemas import ...``).
+"""
 
 from app.schemas.chat import ChatQueryRequest, ChatQueryResponse, QuoteSpan, SourceItem
-from app.schemas.planning import (
-    AnswerConstraints,
-    EvidenceDecision,
-    QueryPlan,
-    QueryVariant,
-    ResearchDecision,
-)
+from app.schemas.planning import ResearchDecision
 from app.schemas.retrieval import RetrievalEvidence, SearchRequest, SearchResponse, StructuralFilters
 from app.schemas.system import HealthResponse, IngestionResult, IngestionSummary
-from app.schemas.types import QueryIntentEnum, QueryModeEnum, RetrievalModeEnum, StructuralContentTargetEnum
+from app.schemas.types import QueryIntentEnum, RetrievalModeEnum, StructuralContentTargetEnum
 
 __all__ = [
-    "AnswerConstraints",
     "ChatQueryRequest",
     "ChatQueryResponse",
-    "EvidenceDecision",
     "HealthResponse",
     "IngestionResult",
     "IngestionSummary",
     "QueryIntentEnum",
-    "QueryModeEnum",
-    "QueryPlan",
-    "QueryVariant",
     "QuoteSpan",
     "ResearchDecision",
     "RetrievalEvidence",

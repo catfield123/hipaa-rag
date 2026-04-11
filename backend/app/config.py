@@ -7,7 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime configuration loaded from environment variables."""
+    """Runtime configuration loaded from environment variables and optional ``.env``.
+
+    Args (fields):
+        See attributes below; URLs and model names drive OpenAI, SQLAlchemy, and ingestion defaults.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -34,13 +38,33 @@ class Settings(BaseSettings):
 
     @property
     def alembic_database_url(self) -> str:
-        """Return the synchronous database URL for Alembic."""
+        """Synchronous SQLAlchemy URL for Alembic (``psycopg`` driver).
+
+        Args:
+            None
+
+        Returns:
+            str: ``database_url`` with ``+asyncpg`` replaced by ``+psycopg``.
+
+        Raises:
+            None
+        """
 
         return self.database_url.replace("+asyncpg", "+psycopg")
 
     @property
     def psycopg_connect_url(self) -> str:
-        """Return a plain psycopg-compatible connection URL."""
+        """Plain connection string for ``psycopg`` (e.g. :mod:`wait_for_db`).
+
+        Args:
+            None
+
+        Returns:
+            str: URL without SQLAlchemy async driver prefix.
+
+        Raises:
+            None
+        """
 
         return (
             self.database_url
@@ -51,6 +75,16 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return a cached settings object for the current process."""
+    """Return a cached settings object for the current process.
+
+    Args:
+        None
+
+    Returns:
+        Settings: Loaded from environment and optional ``.env`` file.
+
+    Raises:
+        None
+    """
 
     return Settings()

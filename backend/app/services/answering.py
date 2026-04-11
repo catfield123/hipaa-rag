@@ -12,6 +12,7 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
+from app.core.exceptions import ConfigurationError
 from app.schemas.planning import ResearchDecision
 from app.schemas.retrieval import RetrievalEvidence
 from app.schemas.types import QueryIntentEnum
@@ -53,10 +54,35 @@ _TOOL_LABELS: dict[str, str] = {
 
 
 def _tool_label(function_name: str) -> str:
+    """Map internal tool names to short user-facing labels for status messages.
+
+    Args:
+        function_name (str): OpenAI tool name (e.g. ``hybrid_search``).
+
+    Returns:
+        str: Human-readable label, or ``function_name`` if unknown.
+
+    Raises:
+        None
+    """
+
     return _TOOL_LABELS.get(function_name, function_name)
 
 
 def _truncate_text(text: str, *, limit: int = 280) -> str:
+    """Collapse whitespace and truncate a string for compact status lines.
+
+    Args:
+        text (str): Arbitrary text (e.g. model rationale).
+        limit (int): Maximum grapheme length before appending an ellipsis.
+
+    Returns:
+        str: Single-line truncated string.
+
+    Raises:
+        None
+    """
+
     collapsed = " ".join(text.split())
     if len(collapsed) <= limit:
         return collapsed
@@ -65,7 +91,14 @@ def _truncate_text(text: str, *, limit: int = 280) -> str:
 
 @dataclass(slots=True)
 class FunctionAgentResult:
-    """Result of a retrieval function-calling run."""
+    """Result of a retrieval function-calling run.
+
+    Args (fields):
+        answer (str): Final model answer string.
+        intent (QueryIntentEnum): Intent from the research decision.
+        evidence (list[RetrievalEvidence]): Merged deduplicated evidence across rounds.
+        retrieval_rounds (int): Number of retrieval rounds that executed at least one tool call.
+    """
 
     answer: str
     intent: QueryIntentEnum
@@ -82,6 +115,19 @@ class AnsweringService:
         settings: Settings | None = None,
         client: AsyncOpenAI | None = None,
     ) -> None:
+        """Create an answering service with optional overrides for tests.
+
+        Args:
+            settings (Settings | None): Application settings; defaults to :func:`get_settings`.
+            client (AsyncOpenAI | None): OpenAI async client; defaults to :func:`get_openai_client`.
+
+        Returns:
+            None
+
+        Raises:
+            None
+        """
+
         self.settings = settings or get_settings()
         self.client = client or get_openai_client()
 
@@ -97,7 +143,25 @@ class AnsweringService:
         on_status: AgentStatusEmitter | None = None,
         on_answer_delta: AgentAnswerDeltaEmitter | None = None,
     ) -> FunctionAgentResult:
-        """Answer a question through explicit retrieval and decision function loops."""
+        """Answer a question through explicit retrieval and decision function loops.
+
+        Args:
+            question (str): User question text.
+            session (AsyncSession): Async DB session for retrievers.
+            bm25_service (BM25Service): Lexical search backend.
+            dense_retriever (DenseRetriever): Dense vector backend.
+            hybrid_retriever (HybridRetriever): Hybrid fusion backend.
+            structural_retriever (StructuralContentRetriever): Structural lookup backend.
+            on_status (AgentStatusEmitter | None): Optional async callback for UI status dicts.
+            on_answer_delta (AgentAnswerDeltaEmitter | None): Optional streaming answer chunks.
+
+        Returns:
+            FunctionAgentResult: Final answer text, intent, merged evidence, and round count.
+
+        Raises:
+            ConfigurationError: If ``OPENAI_API_KEY`` is not configured.
+            RuntimeError: If a retrieval round produces no tool calls when calls are required.
+        """
 
         self._ensure_openai_configuration()
         max_rounds = self.settings.agent_max_rounds
@@ -109,6 +173,21 @@ class AnsweringService:
             round_number: int | None = None,
             tool: str | None = None,
         ) -> None:
+            """Send one ``type: status`` payload through ``on_status`` when configured.
+
+            Args:
+                phase (str): Pipeline phase (e.g. ``start``, ``plan``, ``retrieve``, ``decide``, ``answer``).
+                message (str): User-visible status line.
+                round_number (int | None): Retrieval round index, or ``None`` when not applicable.
+                tool (str | None): Active tool name during ``retrieve``, or ``None``.
+
+            Returns:
+                None
+
+            Raises:
+                None
+            """
+
             if on_status is None:
                 return
             payload: dict[str, Any] = {
@@ -283,10 +362,20 @@ class AnsweringService:
         )
 
     def _ensure_openai_configuration(self) -> None:
-        """Reject execution when the required model configuration is missing."""
+        """Reject execution when the required model configuration is missing.
+
+        Args:
+            None
+
+        Returns:
+            None
+
+        Raises:
+            ConfigurationError: If the OpenAI API key is empty.
+        """
 
         if not self.settings.openai_api_key:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "OPENAI_API_KEY is required because answering only supports the function-calling agent."
             )
 
@@ -297,7 +386,20 @@ class AnsweringService:
         evidence: list[RetrievalEvidence],
         round_number: int,
     ) -> ResearchDecision:
-        """Run the explicit post-retrieval decision function."""
+        """Call ``decide_research_status`` to determine whether to continue retrieval.
+
+        Args:
+            question (str): User question text.
+            evidence (list[RetrievalEvidence]): Evidence gathered through the current round.
+            round_number (int): Completed retrieval round index.
+
+        Returns:
+            ResearchDecision: Validated decision payload from the model tool call.
+
+        Raises:
+            ValueError: If the expected tool call is missing (see :func:`extract_research_decision_payload`).
+            ValidationError: If the tool arguments do not match :class:`~app.schemas.planning.ResearchDecision`.
+        """
 
         response = await self.client.chat.completions.create(
             model=self.settings.openai_chat_model,
@@ -324,7 +426,21 @@ class AnsweringService:
         evidence: list[RetrievalEvidence],
         on_delta: AgentAnswerDeltaEmitter | None = None,
     ) -> str:
-        """Generate the final answer after the decision function stops retrieval."""
+        """Generate the user-visible answer, optionally streaming token deltas.
+
+        Args:
+            question (str): User question text.
+            decision (ResearchDecision): Final research decision (intent, structure flags).
+            evidence (list[RetrievalEvidence]): Grounding excerpts passed into the prompt.
+            on_delta (AgentAnswerDeltaEmitter | None): If set, streams answer fragments from the chat completion.
+
+        Returns:
+            str: Final answer text (non-empty, or a configured fallback when the model returns nothing).
+
+        Raises:
+            ConfigurationError: If OpenAI is misconfigured (propagated from the client).
+            Exception: Network or API errors from ``chat.completions.create``.
+        """
 
         messages = build_final_answer_messages(
             question=question,
@@ -363,7 +479,18 @@ def _merge_evidence(
     existing: list[RetrievalEvidence],
     new_items: list[RetrievalEvidence],
 ) -> list[RetrievalEvidence]:
-    """Keep evidence unique by chunk id while preserving order."""
+    """Merge evidence lists, deduplicating by ``chunk_id`` while preserving first-seen order.
+
+    Args:
+        existing (list[RetrievalEvidence]): Prior rounds' evidence.
+        new_items (list[RetrievalEvidence]): New hits from the current round.
+
+    Returns:
+        list[RetrievalEvidence]: Combined list without duplicate chunk ids.
+
+    Raises:
+        None
+    """
 
     merged: list[RetrievalEvidence] = []
     seen_chunk_ids: set[int] = set()
@@ -380,7 +507,18 @@ def _prepare_function_calls(
     *,
     max_queries: int,
 ) -> tuple[list[Any], list[dict[str, object]]]:
-    """Drop exact duplicate calls and cap each round to the configured query budget."""
+    """Deduplicate tool calls by normalized arguments and enforce a per-round call budget.
+
+    Args:
+        function_calls (list[Any]): Raw ``tool_calls`` entries from the chat completion.
+        max_queries (int): Maximum distinct calls to keep this round.
+
+    Returns:
+        tuple[list[Any], list[dict[str, object]]]: Kept call objects and skipped-call diagnostics.
+
+    Raises:
+        None
+    """
 
     prepared_calls: list[Any] = []
     skipped_calls: list[dict[str, object]] = []
@@ -418,7 +556,18 @@ def _prepare_function_calls(
 
 
 def _build_function_call_key(*, function_name: str, function_args: dict[str, Any]) -> str:
-    """Return a stable dedupe key for one retrieval function call."""
+    """Return a stable JSON key for deduplicating identical retrieval calls.
+
+    Args:
+        function_name (str): Tool name.
+        function_args (dict[str, Any]): Parsed arguments (after :func:`_safe_parse_arguments`).
+
+    Returns:
+        str: Canonical JSON string for set membership checks.
+
+    Raises:
+        None
+    """
 
     normalized_args = _normalize_payload(function_args)
     return json.dumps(
@@ -436,7 +585,21 @@ def _build_retrieval_history_entry(
     result_count: int,
     error: str | None = None,
 ) -> dict[str, object]:
-    """Serialize one retrieval call into compact prompt-friendly history."""
+    """Serialize one retrieval tool invocation for inclusion in the next round's user prompt.
+
+    Args:
+        round_number (int): Round index when the call was made.
+        function_name (str): Tool name executed.
+        function_args (dict[str, Any]): Parsed arguments.
+        result_count (int): Number of evidence rows returned (``0`` on failure).
+        error (str | None): Error message when execution failed.
+
+    Returns:
+        dict[str, object]: Compact history dict (query fields omitted when empty).
+
+    Raises:
+        None
+    """
 
     entry: dict[str, object] = {
         "round": round_number,
@@ -460,7 +623,17 @@ def _build_retrieval_history_entry(
 
 
 def _safe_parse_arguments(raw_arguments: str) -> dict[str, Any]:
-    """Best-effort JSON parser for tool-call arguments."""
+    """Parse tool-call JSON; on failure return a dict capturing the raw string.
+
+    Args:
+        raw_arguments (str): JSON object string from the OpenAI tool call.
+
+    Returns:
+        dict[str, Any]: Parsed object, or ``{\"_raw_arguments\": ...}`` when JSON is invalid.
+
+    Raises:
+        None
+    """
 
     try:
         parsed = json.loads(raw_arguments or "{}")
@@ -470,7 +643,17 @@ def _safe_parse_arguments(raw_arguments: str) -> dict[str, Any]:
 
 
 def _normalize_payload(value: Any) -> Any:
-    """Normalize payload values so exact duplicate retrieval calls collapse cleanly."""
+    """Recursively normalize dict/list/string values for stable dedupe keys.
+
+    Args:
+        value (Any): Argument subtree from a tool call.
+
+    Returns:
+        Any: Structure with sorted dict keys, normalized strings (casefold, collapsed whitespace).
+
+    Raises:
+        None
+    """
 
     if isinstance(value, dict):
         return {
