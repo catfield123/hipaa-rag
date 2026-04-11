@@ -1,3 +1,7 @@
+"""Gradio layout: question panel, streaming answer, quotes/sources accordions."""
+
+from __future__ import annotations
+
 import gradio as gr
 
 from .rag_query import run_rag_query
@@ -6,6 +10,12 @@ from .scripts import COPY_ANSWER_JS
 
 
 def build_demo() -> gr.Blocks:
+    """Construct the HIPAA RAG chat UI (question, output, WebSocket-driven updates).
+
+    Returns:
+        gr.Blocks: Configured app; call ``.queue().launch()`` from the entrypoint.
+    """
+
     with gr.Blocks(title="HIPAA RAG") as demo:
         gr.Markdown("## HIPAA RAG")
 

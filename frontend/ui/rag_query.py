@@ -1,4 +1,10 @@
+"""Stream RAG answers over WebSocket and map events to Gradio component updates."""
+
+from __future__ import annotations
+
 import json
+from collections.abc import Iterator, Mapping
+from typing import Any, cast
 
 import gradio as gr
 import websocket
@@ -14,9 +20,24 @@ from .rendering import (
 from .urls import rag_ws_url
 from .ws_types import RagWsEventType
 
+# Seven Gradio outputs: answer MD, hidden copy payload, pipeline HTML, quotes, sources, submit, copy btn.
+RagQueryYield = tuple[Any, Any, Any, Any, Any, Any, Any]
 
-def run_rag_query(question: str):
-    """Stream status/answer; progress bar until first answer token; quotes/sources in accordions."""
+
+def run_rag_query(question: str) -> Iterator[RagQueryYield]:
+    """Stream status and answer tokens from the backend RAG WebSocket.
+
+    Yields tuples for: main answer markdown, hidden copy text, pipeline HTML, quotes markdown,
+    sources markdown, submit button state, copy button state.
+
+    Args:
+        question (str): User question (may be empty).
+
+    Returns:
+        Iterator[RagQueryYield]: Progressive UI updates; stops after ``result`` or ``error``.
+        Failures are surfaced as markdown in the first tuple element instead of raising.
+    """
+
     empty_payload = gr.update(value="")
     empty_bar = progress_bar_html(0, visible=False)
     yield (
@@ -66,7 +87,19 @@ def run_rag_query(question: str):
             raw = ws.recv()
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
-            msg = json.loads(raw)
+            try:
+                msg: dict[str, Any] = json.loads(raw)
+            except json.JSONDecodeError:
+                yield (
+                    "**Error:** invalid message from server.",
+                    empty_payload,
+                    progress_bar_html(0, visible=False),
+                    "",
+                    "",
+                    gr.update(interactive=True),
+                    gr.update(interactive=False),
+                )
+                return
             mtype = msg.get("type")
             if mtype == RagWsEventType.STATUS:
                 if not answer_mode:
@@ -98,8 +131,12 @@ def run_rag_query(question: str):
                 answer = str(msg.get("answer") or "")
                 quotes = msg.get("quotes") or []
                 sources = msg.get("sources") or []
-                quotes_text = render_quotes(quotes) if quotes else ""
-                sources_text = render_sources(sources) if sources else ""
+                quotes_text = (
+                    render_quotes(cast(list[Mapping[str, Any]], quotes)) if quotes else ""
+                )
+                sources_text = (
+                    render_sources(cast(list[Mapping[str, Any]], sources)) if sources else ""
+                )
                 yield (
                     answer,
                     gr.update(value=answer),
